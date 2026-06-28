@@ -5,9 +5,9 @@
 //! that erodes trust in a tool whose entire purpose is "tell me when
 //! things fail."
 
+use opssignal_core::signal::{Severity, SignalInput};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use opssignal_core::signal::{Severity, SignalInput};
 
 fn severity_from_str(s: &str) -> Severity {
     match s.to_lowercase().as_str() {

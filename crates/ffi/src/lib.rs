@@ -32,9 +32,8 @@ impl CResult {
     }
 
     fn error(msg: impl Into<String>) -> Self {
-        let c_string = CString::new(msg.into()).unwrap_or_else(|_| {
-            CString::new("error message contained null byte").unwrap()
-        });
+        let c_string = CString::new(msg.into())
+            .unwrap_or_else(|_| CString::new("error message contained null byte").unwrap());
         CResult {
             success: false,
             error: c_string.into_raw(),
@@ -66,8 +65,8 @@ pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult
             .to_str()
             .map_err(|e| format!("invalid UTF-8 in signal payload: {e}"))?;
 
-        let _input: opssignal_core::signal::SignalInput = serde_json::from_str(json_str)
-            .map_err(|e| format!("invalid signal JSON: {e}"))?;
+        let _input: opssignal_core::signal::SignalInput =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid signal JSON: {e}"))?;
 
         // NOTE: wiring to a long-lived SignalClient instance (held via a
         // process-global or handle passed from the host language) is the

@@ -63,7 +63,9 @@ fn main() {
             // config file (./signal.yaml or $SIGNAL_CONFIG) and call
             // notify_sync with a sane default timeout (e.g. 5s) so CLI
             // invocations from CI exit with a clear status code.
-            eprintln!("signal-cli is scaffolded but not yet wired to SignalClient — see TODO in main.rs");
+            eprintln!(
+                "signal-cli is scaffolded but not yet wired to SignalClient — see TODO in main.rs"
+            );
             std::process::exit(1);
         }
     }

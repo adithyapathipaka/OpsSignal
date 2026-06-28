@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 set -e
-# shellcheck source=/dev/null
-. "$HOME/.cargo/env"
-cargo fmt --all -- --check
+
+if ! command -v cargo &>/dev/null; then
+  for candidate in "$HOME/.cargo/bin/cargo" "/opt/homebrew/bin/cargo" "/usr/local/bin/cargo"; do
+    if [ -x "$candidate" ]; then
+      export PATH="$(dirname "$candidate"):$PATH"
+      break
+    fi
+  done
+fi
+
+if ! command -v cargo &>/dev/null; then
+  echo "cargo not found — run scripts/setup-hooks.sh to verify your Rust installation"
+  exit 1
+fi
+
+cargo fmt --all

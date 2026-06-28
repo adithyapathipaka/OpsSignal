@@ -51,10 +51,12 @@ impl SqliteSink {
 
 impl SignalSink for SqliteSink {
     fn write(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError> {
-        let conn = self.conn.lock().map_err(|_| {
-            SignalError::Sink("sqlite connection mutex poisoned".to_string())
-        })?;
-        let payload = serde_json::to_string(signal).map_err(|e| SignalError::Sink(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| SignalError::Sink("sqlite connection mutex poisoned".to_string()))?;
+        let payload =
+            serde_json::to_string(signal).map_err(|e| SignalError::Sink(e.to_string()))?;
         conn.execute(
             "INSERT INTO signals (id, source, event_type, severity, title, environment, dedup_key, delivery_status, provider, error, payload_json, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
