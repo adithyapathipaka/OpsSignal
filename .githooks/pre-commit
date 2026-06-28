@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -e
+# shellcheck source=/dev/null
+. "$HOME/.cargo/env"
+cargo fmt --all -- --check
