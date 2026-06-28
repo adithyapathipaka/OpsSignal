@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-slim<
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  python:
+    name: Python bindings (maturin + pytest)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build extension
+        working-directory: python
+        run: maturin develop
+      - name: Run tests
+        working-directory: python
+        run: |
+          pip install pytest
+          pytest
+
+  # NOTE: this is a placeholder until the zero-width-unicode check
+  # mentioned in CONTRIBUTING/SECURITY is actually scripted. Track as a
+  # follow-up issue rather than silently skipping it.
+  claude-md-integrity:
+    name: Check CLAUDE.md for hidden unicode
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for zero-width / invisible unicode in CLAUDE.md
+        run: |
+          if [ -f CLAUDE.md ]; then
+            python3 - <<'EOF'
+          import sys
+          suspicious = ['\u200b', '\u200c', '\u200d', '\ufeff']
+          with open('CLAUDE.md', encoding='utf-8') as f:
+              content = f.read()
+          found = [hex(ord(c)) for c in content if c in suspicious]
+          if found:
+              print(f"Suspicious invisible unicode characters found: {found}")
+              sys.exit(1)
+          print("CLAUDE.md clean.")
+          EOF
+          else
+            echo "No CLAUDE.md present, skipping."
+          fi
