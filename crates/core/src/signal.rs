@@ -16,6 +16,35 @@ pub enum Severity {
     Critical,
 }
 
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Severity::Info => "info",
+            Severity::Success => "success",
+            Severity::Warning => "warning",
+            Severity::Error => "error",
+            Severity::Critical => "critical",
+        })
+    }
+}
+
+impl std::str::FromStr for Severity {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "info" => Ok(Severity::Info),
+            "success" => Ok(Severity::Success),
+            "warning" => Ok(Severity::Warning),
+            "error" => Ok(Severity::Error),
+            "critical" => Ok(Severity::Critical),
+            other => Err(format!(
+                "unknown severity {other:?}; expected one of: info, success, warning, error, critical"
+            )),
+        }
+    }
+}
+
 /// The generic signal model. `id` and `timestamp` are always stamped by
 /// the core (never trusted from the caller) so every downstream
 /// component — sink, dedup, retry tracking — has a stable identity and
@@ -112,6 +141,7 @@ fn compute_dedup_key(input: &SignalInput) -> String {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SignalError {
     #[error("validation failed: {0}")]
     Validation(String),
@@ -169,5 +199,31 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&input).is_err());
+    }
+
+    #[test]
+    fn severity_display_is_lowercase() {
+        assert_eq!(Severity::Info.to_string(), "info");
+        assert_eq!(Severity::Critical.to_string(), "critical");
+        assert_eq!(Severity::Warning.to_string(), "warning");
+    }
+
+    #[test]
+    fn severity_from_str_roundtrips() {
+        for s in &["info", "success", "warning", "error", "critical"] {
+            let parsed: Severity = s.parse().expect("valid severity");
+            assert_eq!(parsed.to_string(), *s);
+        }
+    }
+
+    #[test]
+    fn severity_from_str_is_case_insensitive() {
+        assert_eq!("WARNING".parse::<Severity>().unwrap(), Severity::Warning);
+        assert_eq!("Error".parse::<Severity>().unwrap(), Severity::Error);
+    }
+
+    #[test]
+    fn severity_from_str_rejects_unknown() {
+        assert!("bogus".parse::<Severity>().is_err());
     }
 }

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::{Parser, Subcommand};
 use opssignal_core::signal::{Severity, SignalInput};
 
@@ -27,16 +29,6 @@ enum Commands {
     },
 }
 
-fn parse_severity(s: &str) -> Severity {
-    match s.to_lowercase().as_str() {
-        "success" => Severity::Success,
-        "warning" => Severity::Warning,
-        "error" => Severity::Error,
-        "critical" => Severity::Critical,
-        _ => Severity::Info,
-    }
-}
-
 fn main() {
     let cli = Cli::parse();
 
@@ -49,10 +41,18 @@ fn main() {
             message,
             environment,
         } => {
+            let severity = match severity.parse::<Severity>() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            };
+
             let _input = SignalInput {
                 source,
                 event_type,
-                severity: parse_severity(&severity),
+                severity,
                 title,
                 message,
                 environment,

@@ -1,8 +1,13 @@
+#![forbid(unsafe_code)]
+
 pub mod delivery;
 pub mod providers;
 pub mod routing;
 pub mod signal;
 pub mod sink;
+
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+const INITIAL_BACKOFF_MS: u64 = 200;
 
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
 use routing::RoutingConfig;
@@ -48,6 +53,7 @@ impl SignalClient {
     /// Blocking, bounded by timeout. Caller gets a definitive result.
     /// Same pipeline as notify_async — only the blocking behavior
     /// differs.
+    #[must_use = "check whether the signal was delivered"]
     pub fn notify_sync(
         &self,
         input: SignalInput,
@@ -84,9 +90,9 @@ async fn deliver(
 
     for name in &provider_names {
         if let Some(provider) = providers.get(name) {
-            // Basic retry: 3 attempts, exponential backoff.
-            // v0.2 roadmap item: tune this, add jitter, make configurable.
-            for attempt in 1..=3u32 {
+            // Basic retry: exponential backoff up to MAX_RETRY_ATTEMPTS.
+            // v0.2 roadmap item: add jitter, make configurable per-route.
+            for attempt in 1..=MAX_RETRY_ATTEMPTS {
                 match provider.send(signal).await {
                     Ok(()) => {
                         return DeliveryResult {
@@ -98,9 +104,11 @@ async fn deliver(
                     }
                     Err(e) => {
                         last_error = Some(e.to_string());
-                        if attempt < 3 {
-                            tokio::time::sleep(Duration::from_millis(200 * 2u64.pow(attempt)))
-                                .await;
+                        if attempt < MAX_RETRY_ATTEMPTS {
+                            tokio::time::sleep(Duration::from_millis(
+                                INITIAL_BACKOFF_MS * 2u64.pow(attempt),
+                            ))
+                            .await;
                         }
                     }
                 }
@@ -114,6 +122,6 @@ async fn deliver(
         status: DeliveryStatus::Failed,
         provider: None,
         error: last_error.or_else(|| Some("no provider delivered successfully".to_string())),
-        attempts: 3,
+        attempts: MAX_RETRY_ATTEMPTS,
     }
 }

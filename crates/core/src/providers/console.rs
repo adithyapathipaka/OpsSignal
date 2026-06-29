@@ -15,7 +15,7 @@ impl Provider for ConsoleProvider {
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
         println!(
-            "[signal:{}] {:?} {} — {}",
+            "[signal:{}] {} {} — {}",
             signal.source, signal.severity, signal.event_type, signal.title
         );
         Ok(())

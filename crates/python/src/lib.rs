@@ -9,16 +9,6 @@ use opssignal_core::signal::{Severity, SignalInput};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-fn severity_from_str(s: &str) -> Severity {
-    match s.to_lowercase().as_str() {
-        "success" => Severity::Success,
-        "warning" => Severity::Warning,
-        "error" => Severity::Error,
-        "critical" => Severity::Critical,
-        _ => Severity::Info,
-    }
-}
-
 /// notify(source, event_type, title, severity="info", message=None,
 ///         environment=None, metadata=None)
 ///
@@ -37,11 +27,16 @@ fn notify(
     message: Option<String>,
     environment: Option<String>,
 ) -> PyResult<()> {
+    // Unknown severities fall back to Info rather than raising — the
+    // Python binding prioritises leniency over strictness here so that
+    // a misconfigured severity string never silences an alert.
+    let severity = severity.parse::<Severity>().unwrap_or_default();
+
     let input = SignalInput {
         source,
         event_type,
         title,
-        severity: severity_from_str(severity),
+        severity,
         message,
         environment,
         ..Default::default()
