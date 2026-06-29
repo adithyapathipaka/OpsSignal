@@ -5,9 +5,10 @@ use uuid::Uuid;
 
 /// Severity is a closed enum, not a free string, so the routing engine
 /// can match on it exhaustively instead of doing string comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    #[default]
     Info,
     Success,
     Warning,
@@ -66,12 +67,6 @@ pub struct SignalInput {
     /// Caller may supply an explicit dedup key; if absent, core computes
     /// one from (source, event_type, title, environment).
     pub dedup_key: Option<String>,
-}
-
-impl Default for Severity {
-    fn default() -> Self {
-        Severity::Info
-    }
 }
 
 impl Signal {

@@ -15,6 +15,6 @@ classifiers = [
 ]
 
 [tool.maturin]
-python-source = "python"
+python-source = "."
 module-name = "opssignal._native"
 manifest-path = "../crates/python/Cargo.toml"
