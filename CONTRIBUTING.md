@@ -43,16 +43,25 @@ review continues — this is a hard project rule, not a style preference.
 
 ## Development setup
 
-```bash
-# Rust core, ffi, cli
-cargo build --workspace
-cargo test --workspace
+Run the bootstrap script once after cloning:
 
-# Python bindings (requires maturin)
-cd python
-pip install maturin
-maturin develop
-python -m pytest
+```bash
+bash scripts/setup-dev.sh
+```
+
+This verifies Rust >= 1.75 and Python >= 3.9, creates `python/.venv`,
+installs all dev tools (maturin, pytest, ruff, bandit, ast-grep), builds
+the workspace, runs the full test suite, and wires up the git hooks.
+Safe to re-run if your environment gets out of sync.
+
+Day-to-day commands:
+
+```bash
+source python/.venv/bin/activate                   # activate Python venv
+cargo build --workspace --exclude opssignal-py     # Rust build
+cd python && maturin develop                       # rebuild Python extension
+cargo test --workspace                             # Rust tests
+cd python && pytest                                # Python tests
 ```
 
 ## Commit / PR conventions
