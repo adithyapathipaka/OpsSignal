@@ -61,6 +61,19 @@ jobs:
           pip install pytest
           pytest
 
+  ast-grep:
+    name: ast-grep structural lint
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install ast-grep
+        run: npm install -g @ast-grep/cli
+      - name: Run all rules
+        run: sg scan --config sgconfig.yml
+
   python-lint:
     name: Python lint and security (ruff, bandit)
     runs-on: ubuntu-slim

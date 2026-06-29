@@ -32,8 +32,10 @@ impl CResult {
     }
 
     fn error(msg: impl Into<String>) -> Self {
-        let c_string = CString::new(msg.into())
-            .unwrap_or_else(|_| CString::new("error message contained null byte").unwrap());
+        let c_string = CString::new(msg.into()).unwrap_or_else(|_| {
+            CString::new("error message contained null byte")
+                .expect("fallback literal has no null bytes")
+        });
         CResult {
             success: false,
             error: c_string.into_raw(),
