@@ -18,3 +18,6 @@ classifiers = [
 python-source = "."
 module-name = "opssignal._native"
 manifest-path = "../crates/python/Cargo.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
