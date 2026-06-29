@@ -21,6 +21,21 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  rust-security:
+    name: Rust security (cargo-audit, cargo-deny)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies for known CVEs
+        run: cargo audit
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check licenses and bans
+        run: cargo deny check
+
   python:
     name: Python bindings (maturin + pytest)
     runs-on: ubuntu-slim
@@ -46,9 +61,26 @@ jobs:
           pip install pytest
           pytest
 
-  # NOTE: this is a placeholder until the zero-width-unicode check
-  # mentioned in CONTRIBUTING/SECURITY is actually scripted. Track as a
-  # follow-up issue rather than silently skipping it.
+  python-lint:
+    name: Python lint and security (ruff, bandit)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install tools
+        run: pip install ruff bandit
+      - name: ruff lint
+        working-directory: python
+        run: ruff check .
+      - name: ruff format check
+        working-directory: python
+        run: ruff format --check .
+      - name: bandit security scan
+        working-directory: python
+        run: bandit -r opssignal/ -ll
+
   claude-md-integrity:
     name: Check CLAUDE.md for hidden unicode
     runs-on: ubuntu-slim
@@ -57,9 +89,9 @@ jobs:
       - name: Scan for zero-width / invisible unicode in CLAUDE.md
         run: |
           if [ -f CLAUDE.md ]; then
-            python3 - <<'EOF'
+            python3 - <<'PYEOF'
           import sys
-          suspicious = ['\u200b', '\u200c', '\u200d', '\ufeff']
+          suspicious = ['​', '‌', '‍', '﻿']
           with open('CLAUDE.md', encoding='utf-8') as f:
               content = f.read()
           found = [hex(ord(c)) for c in content if c in suspicious]
@@ -67,7 +99,7 @@ jobs:
               print(f"Suspicious invisible unicode characters found: {found}")
               sys.exit(1)
           print("CLAUDE.md clean.")
-          EOF
+          PYEOF
           else
             echo "No CLAUDE.md present, skipping."
           fi
