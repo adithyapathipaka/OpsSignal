@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  rust-security:
+    name: Rust security (cargo-audit, cargo-deny)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies for known CVEs
+        run: cargo audit
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check licenses and bans
+        run: cargo deny check
+
+  python:
+    name: Python bindings (maturin + pytest)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v3
+      - name: Install dev tools
+        run: uv sync --dev
+      - name: Build extension
+        run: cd python && uv run maturin develop
+      - name: Run tests
+        run: uv run pytest --tb=short -q
+
+  ast-grep:
+    name: ast-grep structural lint
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install ast-grep
+        run: npm install -g @ast-grep/cli
+      - name: Run all rules
+        run: sg scan --config sgconfig.yml
+
+  python-lint:
+    name: Python lint and security (ruff, bandit)
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install dev tools
+        run: uv sync --dev
+      - name: ruff lint
+        run: uv run ruff check python/opssignal python/tests
+      - name: ruff format check
+        run: uv run ruff format --check python/opssignal python/tests
+      - name: bandit security scan
+        run: uv run bandit -r python/opssignal/ -ll
+
+  claude-md-integrity:
+    name: Check CLAUDE.md for hidden unicode
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for zero-width / invisible unicode in CLAUDE.md
+        run: |
+          if [ -f CLAUDE.md ]; then
+            python3 - <<'PYEOF'
+          import sys
+          suspicious = ['​', '‌', '‍', '﻿']
+          with open('CLAUDE.md', encoding='utf-8') as f:
+              content = f.read()
+          found = [hex(ord(c)) for c in content if c in suspicious]
+          if found:
+              print(f"Suspicious invisible unicode characters found: {found}")
+              sys.exit(1)
+          print("CLAUDE.md clean.")
+          PYEOF
+          else
+            echo "No CLAUDE.md present, skipping."
+          fi

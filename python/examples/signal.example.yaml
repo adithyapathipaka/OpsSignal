@@ -1,0 +1,29 @@
+# opssignal configuration
+#
+# Place this file at ./signal.yaml or set $SIGNAL_CONFIG to its path.
+# Environment variable interpolation (${VAR}) is supported for secrets.
+#
+# NOTE: unmatched signals always fall back to the console provider —
+# this is a hard-coded invariant in the routing engine, not something
+# you can disable. See architecture docs for why.
+
+providers:
+  console:
+    enabled: true
+  slack:
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+
+routes:
+  - match:
+      severity: [error, critical]
+      environment: prod
+    providers:
+      - slack
+  - match:
+      severity: [warning]
+    providers:
+      - console
+
+storage:
+  sink: sqlite
+  path: "./signals.db"

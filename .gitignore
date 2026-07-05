@@ -1,0 +1,33 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+.venv/
+venv/
+*.so
+*.pyd
+python/dist/
+python/build/
+
+# SQLite default sink output - never commit local signal history
+*.db
+*.db-journal
+signal.yaml
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+.idea
+
+uv.lock

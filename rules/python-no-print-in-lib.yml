@@ -1,0 +1,11 @@
+id: python-no-print-in-lib
+language: Python
+severity: warning
+message: >
+  Avoid print() in library code — callers cannot silence or redirect it.
+  Use the logging module or raise an exception so the host application
+  can decide what to do with the output.
+rule:
+  pattern: print($$$ARGS)
+files:
+  - "python/opssignal/**"

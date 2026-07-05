@@ -1,0 +1,15 @@
+id: python-no-bare-except
+language: Python
+severity: error
+message: >
+  Bare except clauses catch BaseException — including KeyboardInterrupt,
+  SystemExit, and GeneratorExit. Catch the specific exception type you
+  expect, or at minimum use `except Exception:` to exclude fatal signals.
+rule:
+  pattern: |
+    try:
+      $$$BODY
+    except:
+      $$$HANDLER
+files:
+  - "python/opssignal/**"

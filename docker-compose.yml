@@ -1,0 +1,47 @@
+services:
+  # Interactive development shell.
+  # Usage:
+  #   docker compose build
+  #   docker compose run --rm dev          # opens a bash shell
+  #   docker compose run --rm dev cargo test --workspace
+  #   docker compose run --rm dev uv run pytest
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - .:/workspace
+      # Isolate the Linux-native build artifacts from the macOS host.
+      # Without these named volumes the container would re-link against
+      # the host's macOS dylibs on every run.
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - build-target:/workspace/target
+      # Python deps are baked into the image at /opt/venv — no volume needed.
+    working_dir: /workspace
+    environment:
+      # Rust build output goes to the named volume, not the host mount.
+      CARGO_TARGET_DIR: /workspace/target
+    tty: true
+    stdin_open: true
+
+  # One-shot: full test suite (same as CI).
+  # Usage: docker compose run --rm test
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - build-target:/workspace/target
+    working_dir: /workspace
+    environment:
+      CARGO_TARGET_DIR: /workspace/target
+    command: bash scripts/check.sh
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  build-target:
