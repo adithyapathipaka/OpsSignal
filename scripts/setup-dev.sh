@@ -12,6 +12,7 @@
 #   5. Runs the full test suite to confirm everything works
 #   6. Installs git hooks (cargo fmt --check, clippy, ast-grep, ruff)
 #   7. Installs ast-grep (optional, via npm)
+#   8. Builds the Docker dev image (optional, skipped if Docker isn't running)
 #
 # Safe to re-run — all steps are idempotent.
 
@@ -126,15 +127,43 @@ else
   warn "Install Node.js (https://nodejs.org) then run: npm install -g @ast-grep/cli"
 fi
 
+# ── 10. Docker dev image (optional) ───────────────────────────────────────────
+step "Building Docker dev image (optional)"
+
+if ! command -v docker &>/dev/null; then
+  warn "docker not found — skipping image build."
+  warn "Install Docker Desktop: https://docs.docker.com/get-started/get-docker/"
+elif ! docker info &>/dev/null 2>&1; then
+  warn "Docker daemon not running — skipping image build."
+  warn "Start Docker Desktop, then re-run:  docker compose build"
+else
+  echo "  Building opssignal-dev image (this takes a few minutes the first time)..."
+  if docker compose build; then
+    ok "Docker dev image ready"
+    echo ""
+    echo "  Docker usage:"
+    echo "    docker compose run --rm dev          # interactive shell"
+    echo "    docker compose run --rm test         # full test suite"
+  else
+    warn "docker compose build failed — check output above."
+    warn "Image is optional; local Rust/Python env is fully functional."
+  fi
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}Setup complete.${NC}"
 echo ""
-echo "  Activate the Python venv:   source .venv/bin/activate"
-echo "  Rebuild Python extension:   cd python && maturin develop"
-echo "  Run all tests:              cargo test --workspace && pytest"
-echo "  Lint:                       cargo clippy --workspace -- -D warnings"
-echo "                              ruff check python/opssignal python/tests"
+echo "  Local dev:"
+echo "    source .venv/bin/activate               # activate Python venv"
+echo "    cargo build --workspace                 # Rust build"
+echo "    cd python && maturin develop            # rebuild Python extension"
+echo "    cargo test --workspace && pytest        # run all tests"
+echo "    ruff check python/opssignal python/tests"
+echo ""
+echo "  Docker dev (if image was built above):"
+echo "    docker compose run --rm dev             # interactive shell"
+echo "    docker compose run --rm test            # full test suite"
 echo ""
 echo "  The pre-commit hook runs fmt, clippy, ast-grep, and ruff automatically."
 echo "  See CONTRIBUTING.md for project conventions."

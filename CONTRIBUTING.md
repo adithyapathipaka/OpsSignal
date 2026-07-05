@@ -49,23 +49,35 @@ Run the bootstrap script once after cloning:
 bash scripts/setup-dev.sh
 ```
 
-This verifies Rust >= 1.75 and Python >= 3.9, creates `.venv` at the repo
-root, installs all dev tools (maturin, pytest, ruff, bandit, ast-grep),
-builds the workspace, runs the full test suite, and wires up the git hooks.
+This installs all tooling, builds the workspace, runs the full test suite,
+wires up git hooks, and (if Docker is running) pre-builds the dev image.
 Safe to re-run if your environment gets out of sync.
 
-The script requires **uv** (installed automatically if missing) and Rust >= 1.75.
-The Python extension is built with the `abi3` stable ABI so it runs on
-Python 3.9 through 3.14+ without recompiling.
+Prerequisites installed automatically if missing: **uv**, **Rust >= 1.75**.
+The Python extension uses the `abi3` stable ABI (Python 3.9–3.14+).
 
-Day-to-day commands:
+**Local day-to-day:**
 
 ```bash
 source .venv/bin/activate                          # activate Python venv (repo root)
 cargo build --workspace --exclude opssignal-py     # Rust build
 cd python && maturin develop                       # rebuild Python extension
-cargo test --workspace                             # Rust tests
-pytest                                             # Python tests (from repo root)
+cargo test --workspace && pytest                   # run all tests
+ruff check python/opssignal python/tests           # Python lint
+```
+
+**Docker (alternative — no local Rust/Python required):**
+
+```bash
+docker compose run --rm dev        # interactive shell with all tools
+docker compose run --rm test       # full test suite (Rust + Python + lint)
+```
+
+The first `docker compose run` builds the image automatically if it wasn't
+built during `setup-dev.sh`. You can also rebuild it explicitly:
+
+```bash
+docker compose build
 ```
 
 ## Commit / PR conventions
