@@ -38,4 +38,5 @@ fi
 echo ""
 echo "Setup complete."
 echo "Pre-commit runs: cargo fmt --check, cargo clippy, ast-grep (if sg installed), ruff (if installed)."
-echo "Run 'cargo test --workspace' manually before pushing."
+echo "Activate the Python venv with: source python/.venv/bin/activate"
+echo "Run 'cargo test --workspace && cd python && pytest' manually before pushing."

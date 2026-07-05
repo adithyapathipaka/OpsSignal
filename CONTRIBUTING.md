@@ -54,6 +54,10 @@ installs all dev tools (maturin, pytest, ruff, bandit, ast-grep), builds
 the workspace, runs the full test suite, and wires up the git hooks.
 Safe to re-run if your environment gets out of sync.
 
+The script requires **uv** (installed automatically if missing) and Rust >= 1.75.
+The Python extension is built with the `abi3` stable ABI so it runs on
+Python 3.9 through 3.14+ without recompiling.
+
 Day-to-day commands:
 
 ```bash
