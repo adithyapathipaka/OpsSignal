@@ -3,7 +3,7 @@
 #
 # Build:  docker compose build
 # Shell:  docker compose run --rm dev
-# Tests:  docker compose run --rm dev bash -c "uv sync --dev && cd python && uv run maturin develop && cd .. && cargo test --workspace --exclude opssignal-py && uv run pytest"
+# Tests:  docker compose run --rm test   (or: docker compose run --rm dev bash scripts/check.sh)
 
 FROM rust:1-slim-bookworm
 
@@ -29,9 +29,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 # ── Rust dev components ───────────────────────────────────────────────────────
 RUN rustup component add rustfmt clippy
-
-# ── ast-grep structural linter ────────────────────────────────────────────────
-RUN npm install -g @ast-grep/cli --silent
 
 WORKDIR /workspace
 
