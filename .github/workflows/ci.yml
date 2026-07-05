@@ -42,24 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install maturin
-        run: pip install maturin
-      - name: Create virtualenv
-        run: python -m venv python/.venv
+      - uses: astral-sh/setup-uv@v3
+      - name: Install dev tools
+        run: uv sync --dev
       - name: Build extension
-        working-directory: python
-        run: |
-          source .venv/bin/activate
-          maturin develop
+        run: cd python && uv run maturin develop
       - name: Run tests
-        working-directory: python
-        run: |
-          source .venv/bin/activate
-          pip install pytest
-          pytest
+        run: uv run pytest --tb=short -q
 
   ast-grep:
     name: ast-grep structural lint

@@ -1,7 +1,7 @@
 [project]
 name = "opssignal-dev"
 version = "0.0.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 # This is the repo-level dev environment, not the publishable SDK package.
 # The installable SDK lives in python/pyproject.toml (maturin + pyo3).
 dependencies = []
@@ -16,6 +16,7 @@ dev-dependencies = [
     "ruff>=0.4",
     # Security
     "bandit>=1.7",
+    "graphifyy==0.9.6",
 ]
 
 [tool.ruff]
