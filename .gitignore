@@ -29,3 +29,5 @@ signal.yaml
 # OS
 .DS_Store
 .idea
+
+uv.lock
