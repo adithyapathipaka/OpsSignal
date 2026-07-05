@@ -1,5 +1,6 @@
 # Development image for OpsSignal contributors.
 # Includes: Rust stable (rustfmt + clippy), Python 3.11 via uv, Node 20 (ast-grep).
+# Python dependencies are baked in at /opt/venv — no uv sync needed on container start.
 #
 # Build:  docker compose build
 # Shell:  docker compose run --rm dev
@@ -10,8 +11,6 @@ FROM rust:1-slim-bookworm
 ARG DEBIAN_FRONTEND=noninteractive
 
 # ── System deps ───────────────────────────────────────────────────────────────
-# build-essential + pkg-config: needed by ring (crypto), cc crate, and other
-# Rust crates that compile C code.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git ca-certificates \
     build-essential pkg-config \
@@ -27,10 +26,24 @@ ENV PATH="/root/.local/bin:$PATH"
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install 3.11
 
+# ── Python dependencies (baked into image) ───────────────────────────────────
+# Venv lives at /opt/venv so the /workspace volume mount can't shadow it.
+# --no-install-project: source isn't available at build time; maturin develop
+# installs the compiled extension at container runtime.
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY pyproject.toml uv.lock /tmp/opssignal-deps/
+RUN uv venv /opt/venv --python 3.11 \
+    && cd /tmp/opssignal-deps \
+    && uv sync --dev --no-install-project \
+    && rm -rf /tmp/opssignal-deps
+
 # ── Rust dev components ───────────────────────────────────────────────────────
 RUN rustup component add rustfmt clippy
 
+# ── ast-grep structural linter ────────────────────────────────────────────────
+RUN npm install -g @ast-grep/cli --silent
+
 WORKDIR /workspace
 
-# Default: interactive shell. Override with docker compose run --rm dev <cmd>
 CMD ["bash"]

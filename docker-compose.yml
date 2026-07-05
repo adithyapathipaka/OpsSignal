@@ -17,7 +17,7 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - build-target:/workspace/target
-      - python-venv:/workspace/.venv
+      # Python deps are baked into the image at /opt/venv — no volume needed.
     working_dir: /workspace
     environment:
       # Rust build output goes to the named volume, not the host mount.
@@ -36,7 +36,6 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - build-target:/workspace/target
-      - python-venv:/workspace/.venv
     working_dir: /workspace
     environment:
       CARGO_TARGET_DIR: /workspace/target
@@ -46,4 +45,3 @@ volumes:
   cargo-registry:
   cargo-git:
   build-target:
-  python-venv:

@@ -4,8 +4,9 @@
   "service": "dev",
   "workspaceFolder": "/workspace",
 
-  // Set up the full dev environment on first container start.
-  "postCreateCommand": "uv sync --dev && cd python && uv run maturin develop && cd .. && bash scripts/setup-hooks.sh",
+  // Python deps are pre-installed in the image at /opt/venv.
+  // Only maturin develop (compiles the Rust extension) and hooks need to run.
+  "postCreateCommand": "cd python && maturin develop --quiet && cd .. && bash scripts/setup-hooks.sh",
 
   "customizations": {
     "vscode": {
@@ -17,7 +18,7 @@
         "serayuzgur.crates"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
         "rust-analyzer.cargo.features": "all",
         "[rust]": {
           "editor.defaultFormatter": "rust-lang.rust-analyzer",
