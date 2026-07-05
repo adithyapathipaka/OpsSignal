@@ -2,17 +2,9 @@
 # setup-dev.sh — one-time dev environment bootstrap for new contributors.
 #
 # Run from the repo root:
-#   bash scripts/setup-dev.sh
-#
-# What it does:
-#   1. Verifies Rust >= 1.75 with rustfmt + clippy components
-#   2. Installs uv (if missing) and creates .venv (repo root) via uv
-#   3. Installs Python dev tools via uv sync (maturin, pytest, ruff, bandit)
-#   4. Builds the Rust workspace and Python extension (maturin develop)
-#   5. Runs the full test suite to confirm everything works
-#   6. Installs git hooks (cargo fmt --check, clippy, ast-grep, ruff)
-#   7. Installs ast-grep (optional, via npm)
-#   8. Builds the Docker dev image (optional, skipped if Docker isn't running)
+#   bash scripts/setup-dev.sh            # prompts: local or Docker?
+#   bash scripts/setup-dev.sh --local    # local Rust + Python env
+#   bash scripts/setup-dev.sh --docker   # Docker image only
 #
 # Safe to re-run — all steps are idempotent.
 
@@ -31,7 +23,36 @@ ok()   { echo -e "  ${GREEN}ok${NC}  $*"; }
 warn() { echo -e "  ${YELLOW}warn${NC}  $*"; }
 die()  { echo -e "\n  ${RED}error${NC}  $*\n" >&2; exit 1; }
 
-# ── 1. Rust ────────────────────────────────────────────────────────────────────
+# ── Mode selection ─────────────────────────────────────────────────────────────
+MODE="${1:-}"
+
+if [[ -z "$MODE" ]]; then
+  echo ""
+  echo -e "${BOLD}How would you like to develop?${NC}"
+  echo ""
+  echo "  1) local   — install Rust, Python (uv), build natively on this machine"
+  echo "  2) docker  — build the Docker dev image; no local Rust/Python required"
+  echo ""
+  read -rp "Enter 1 or 2 [1]: " choice
+  case "${choice:-1}" in
+    1) MODE="--local"  ;;
+    2) MODE="--docker" ;;
+    *) die "Invalid choice. Run again and enter 1 or 2." ;;
+  esac
+fi
+
+case "$MODE" in
+  --local)  ;;
+  --docker) ;;
+  *) die "Unknown flag '$MODE'. Use --local or --docker." ;;
+esac
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOCAL setup
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$MODE" == "--local" ]]; then
+
+# ── 1. Rust ───────────────────────────────────────────────────────────────────
 step "Checking Rust toolchain"
 
 if ! command -v rustup &>/dev/null; then
@@ -63,39 +84,33 @@ step "Checking uv"
 if ! command -v uv &>/dev/null; then
   echo "  uv not found. Installing..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  # Add to PATH for the rest of this script
   export PATH="$HOME/.local/bin:$PATH"
-  command -v uv &>/dev/null || die "uv install succeeded but binary not found — open a new shell and retry."
+  command -v uv &>/dev/null || die "uv install succeeded but binary not in PATH — open a new shell and retry."
 fi
 ok "uv $(uv --version)"
 
-# ── 3. Python virtualenv via uv ───────────────────────────────────────────────
+# ── 3. Python virtualenv ──────────────────────────────────────────────────────
 step "Setting up Python virtualenv (.venv)"
 
-# Creates .venv at the repo root. uv picks the best available Python >= 3.9.
-# The extension uses the abi3 stable ABI so it runs on Python 3.9 – 3.14+.
-uv venv .venv --python ">=3.9" --quiet
+uv venv .venv --python ">=3.10" --quiet
 ok ".venv ready ($(.venv/bin/python --version))"
 
 # ── 4. Python dev tools ───────────────────────────────────────────────────────
 step "Installing Python dev tools"
 
-# pyproject.toml [tool.uv] dev-dependencies drives this install.
 uv sync --dev --quiet
-ok "maturin, pytest, ruff, bandit installed"
+ok "dev dependencies installed (maturin, pytest, ruff, bandit, graphifyy)"
 
 # ── 5. Build Rust workspace ───────────────────────────────────────────────────
 step "Building Rust workspace"
+
 cargo build --workspace --exclude opssignal-py
 ok "cargo build complete"
 
 # ── 6. Build Python extension ─────────────────────────────────────────────────
 step "Building Python extension (maturin develop)"
-(
-  cd python
-  source "../.venv/bin/activate"
-  maturin develop --quiet
-)
+
+(cd python && source "../.venv/bin/activate" && maturin develop --quiet)
 ok "opssignal._native built (abi3 — works on Python 3.9+)"
 
 # ── 7. Run test suite ─────────────────────────────────────────────────────────
@@ -121,49 +136,68 @@ if command -v sg &>/dev/null; then
 elif command -v npm &>/dev/null; then
   echo "  npm found — installing @ast-grep/cli..."
   npm install -g @ast-grep/cli --silent
-  ok "ast-grep installed: $(command -v sg 2>/dev/null || echo 'reload shell to pick it up')"
+  ok "ast-grep installed"
 else
-  warn "npm not found — ast-grep will be skipped in the pre-commit hook."
-  warn "Install Node.js (https://nodejs.org) then run: npm install -g @ast-grep/cli"
+  warn "npm not found — ast-grep skipped in pre-commit hook."
+  warn "Install Node.js then run: npm install -g @ast-grep/cli"
 fi
 
-# ── 10. Docker dev image (optional) ───────────────────────────────────────────
-step "Building Docker dev image (optional)"
-
-if ! command -v docker &>/dev/null; then
-  warn "docker not found — skipping image build."
-  warn "Install Docker Desktop: https://docs.docker.com/get-started/get-docker/"
-elif ! docker info &>/dev/null 2>&1; then
-  warn "Docker daemon not running — skipping image build."
-  warn "Start Docker Desktop, then re-run:  docker compose build"
-else
-  echo "  Building opssignal-dev image (this takes a few minutes the first time)..."
-  if docker compose build; then
-    ok "Docker dev image ready"
-    echo ""
-    echo "  Docker usage:"
-    echo "    docker compose run --rm dev          # interactive shell"
-    echo "    docker compose run --rm test         # full test suite"
-  else
-    warn "docker compose build failed — check output above."
-    warn "Image is optional; local Rust/Python env is fully functional."
-  fi
-fi
-
-# ── Done ──────────────────────────────────────────────────────────────────────
+# ── Done (local) ──────────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}Setup complete.${NC}"
+echo -e "${GREEN}${BOLD}Local setup complete.${NC}"
 echo ""
-echo "  Local dev:"
-echo "    source .venv/bin/activate               # activate Python venv"
-echo "    cargo build --workspace                 # Rust build"
-echo "    cd python && maturin develop            # rebuild Python extension"
-echo "    cargo test --workspace && pytest        # run all tests"
-echo "    ruff check python/opssignal python/tests"
-echo ""
-echo "  Docker dev (if image was built above):"
-echo "    docker compose run --rm dev             # interactive shell"
-echo "    docker compose run --rm test            # full test suite"
+echo "  source .venv/bin/activate               # activate Python venv"
+echo "  cargo build --workspace                 # Rust build"
+echo "  cd python && maturin develop            # rebuild Python extension"
+echo "  cargo test --workspace && pytest        # run all tests"
+echo "  bash scripts/check.sh                   # full CI check suite"
 echo ""
 echo "  The pre-commit hook runs fmt, clippy, ast-grep, and ruff automatically."
 echo "  See CONTRIBUTING.md for project conventions."
+
+fi  # end --local
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOCKER setup
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$MODE" == "--docker" ]]; then
+
+# ── 1. Docker ─────────────────────────────────────────────────────────────────
+step "Checking Docker"
+
+if ! command -v docker &>/dev/null; then
+  die "docker not found. Install Docker Desktop: https://docs.docker.com/get-started/get-docker/"
+fi
+
+if ! docker info &>/dev/null 2>&1; then
+  die "Docker daemon is not running. Start Docker Desktop and retry."
+fi
+ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
+
+# ── 2. Build dev image ────────────────────────────────────────────────────────
+step "Building Docker dev image"
+
+echo "  This takes a few minutes the first time (downloads Rust + Node base layers)."
+docker compose build
+ok "opssignal-dev image ready"
+
+# ── 3. Git hooks (host-side, for committing from the host) ────────────────────
+step "Installing git hooks"
+
+bash scripts/setup-hooks.sh
+ok "hooks configured (pre-commit runs on the host before each commit)"
+
+# ── Done (Docker) ─────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}${BOLD}Docker setup complete.${NC}"
+echo ""
+echo "  docker compose run --rm dev              # interactive shell (all tools)"
+echo "  docker compose run --rm dev bash scripts/check.sh  # full check suite"
+echo "  docker compose run --rm test             # same as above, one-liner"
+echo ""
+echo "  Inside the container, first-run bootstrap:"
+echo "    uv sync --dev && cd python && uv run maturin develop && cd .."
+echo ""
+echo "  See CONTRIBUTING.md for project conventions."
+
+fi  # end --docker
