@@ -40,17 +40,7 @@ services:
     working_dir: /workspace
     environment:
       CARGO_TARGET_DIR: /workspace/target
-    command: >
-      bash -c "
-        set -e
-        echo '==> uv sync' && uv sync --dev --quiet
-        echo '==> maturin develop' && (cd python && uv run maturin develop --quiet)
-        echo '==> cargo test' && cargo test --workspace --exclude opssignal-py
-        echo '==> pytest' && uv run pytest --tb=short -q
-        echo '==> ruff' && uv run ruff check python/opssignal python/tests
-        echo '==> sg scan' && sg scan --config sgconfig.yml
-        echo 'All checks passed.'
-      "
+    command: bash scripts/check.sh
 
 volumes:
   cargo-registry:
