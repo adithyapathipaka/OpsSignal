@@ -1,8 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import patch, call
+from unittest.mock import patch
 
-import pytest
-from opssignal.integrations.airflow import failure_callback, _safe_get
+from opssignal.integrations.airflow import _safe_get, failure_callback
 
 
 class TestSafeGet:

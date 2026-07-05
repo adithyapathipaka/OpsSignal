@@ -49,9 +49,9 @@ Run the bootstrap script once after cloning:
 bash scripts/setup-dev.sh
 ```
 
-This verifies Rust >= 1.75 and Python >= 3.9, creates `python/.venv`,
-installs all dev tools (maturin, pytest, ruff, bandit, ast-grep), builds
-the workspace, runs the full test suite, and wires up the git hooks.
+This verifies Rust >= 1.75 and Python >= 3.9, creates `.venv` at the repo
+root, installs all dev tools (maturin, pytest, ruff, bandit, ast-grep),
+builds the workspace, runs the full test suite, and wires up the git hooks.
 Safe to re-run if your environment gets out of sync.
 
 The script requires **uv** (installed automatically if missing) and Rust >= 1.75.
@@ -61,11 +61,11 @@ Python 3.9 through 3.14+ without recompiling.
 Day-to-day commands:
 
 ```bash
-source python/.venv/bin/activate                   # activate Python venv
+source .venv/bin/activate                          # activate Python venv (repo root)
 cargo build --workspace --exclude opssignal-py     # Rust build
 cd python && maturin develop                       # rebuild Python extension
 cargo test --workspace                             # Rust tests
-cd python && pytest                                # Python tests
+pytest                                             # Python tests (from repo root)
 ```
 
 ## Commit / PR conventions

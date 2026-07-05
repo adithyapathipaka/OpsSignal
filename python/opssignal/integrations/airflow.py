@@ -35,16 +35,14 @@ def _safe_get(context: dict, key: str, default: Any = None) -> Any:
 def failure_callback(context: dict) -> None:
     """Drop-in on_failure_callback for Airflow tasks/DAGs.
 
-    Extracts dag_id, task_id, run_id, and try_number from the Airflow
-    context and emits a `task_failed` signal at `error` severity.
+    Extracts dag_id, task_id, and exception from the Airflow context
+    and emits a `task_failed` signal at `error` severity.
     """
     dag_run = _safe_get(context, "dag_run")
     task_instance = _safe_get(context, "task_instance")
 
     dag_id = getattr(dag_run, "dag_id", None) or _safe_get(context, "dag", "unknown")
     task_id = getattr(task_instance, "task_id", "unknown")
-    try_number = getattr(task_instance, "try_number", None)
-    run_id = getattr(dag_run, "run_id", None)
     exception = _safe_get(context, "exception")
 
     notify(

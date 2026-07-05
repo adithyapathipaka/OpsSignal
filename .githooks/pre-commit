@@ -61,22 +61,31 @@ fi
 
 # ── Python ────────────────────────────────────────────────────────────────────
 
-if command -v ruff &>/dev/null; then
+# Prefer the repo-root venv's ruff over any system ruff so the config in
+# the root pyproject.toml is always paired with the matching ruff version.
+RUFF_BIN=""
+if [ -x ".venv/bin/ruff" ]; then
+  RUFF_BIN=".venv/bin/ruff"
+elif command -v ruff &>/dev/null; then
+  RUFF_BIN="ruff"
+fi
+
+if [ -n "$RUFF_BIN" ]; then
   echo "==> ruff lint"
-  if ruff check python/; then
+  if $RUFF_BIN check python/opssignal python/tests; then
     pass "ruff lint"
   else
-    fail "ruff lint — run 'ruff check --fix python/' to auto-fix"
+    fail "ruff lint — run 'ruff check --fix python/opssignal python/tests' to auto-fix"
     exit 1
   fi
 
   echo "==> ruff format"
-  if ruff format --check python/; then
+  if $RUFF_BIN format --check python/opssignal python/tests; then
     pass "ruff format"
   else
-    fail "ruff format — run 'ruff format python/' to fix"
+    fail "ruff format — run 'ruff format python/opssignal python/tests' to fix"
     exit 1
   fi
 else
-  skip "ruff not found — Python lint skipped (pip install ruff)"
+  skip "ruff not found — Python lint skipped (uv sync --dev)"
 fi

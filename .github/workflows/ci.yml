@@ -79,20 +79,15 @@ jobs:
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install tools
-        run: pip install ruff bandit
+      - uses: astral-sh/setup-uv@v3
+      - name: Install dev tools
+        run: uv sync --dev
       - name: ruff lint
-        working-directory: python
-        run: ruff check .
+        run: uv run ruff check python/opssignal python/tests
       - name: ruff format check
-        working-directory: python
-        run: ruff format --check .
+        run: uv run ruff format --check python/opssignal python/tests
       - name: bandit security scan
-        working-directory: python
-        run: bandit -r opssignal/ -ll
+        run: uv run bandit -r python/opssignal/ -ll
 
   claude-md-integrity:
     name: Check CLAUDE.md for hidden unicode

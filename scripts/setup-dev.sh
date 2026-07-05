@@ -6,8 +6,8 @@
 #
 # What it does:
 #   1. Verifies Rust >= 1.75 with rustfmt + clippy components
-#   2. Installs uv (if missing) and creates python/.venv via uv
-#   3. Installs Python dev tools via uv (maturin, pytest, ruff, bandit)
+#   2. Installs uv (if missing) and creates .venv (repo root) via uv
+#   3. Installs Python dev tools via uv sync (maturin, pytest, ruff, bandit)
 #   4. Builds the Rust workspace and Python extension (maturin develop)
 #   5. Runs the full test suite to confirm everything works
 #   6. Installs git hooks (cargo fmt --check, clippy, ast-grep, ruff)
@@ -69,22 +69,18 @@ fi
 ok "uv $(uv --version)"
 
 # ── 3. Python virtualenv via uv ───────────────────────────────────────────────
-step "Setting up Python virtualenv (python/.venv)"
+step "Setting up Python virtualenv (.venv)"
 
-# uv picks the best available Python >= 3.9 automatically.
+# Creates .venv at the repo root. uv picks the best available Python >= 3.9.
 # The extension uses the abi3 stable ABI so it runs on Python 3.9 – 3.14+.
-uv venv python/.venv --python ">=3.9" --quiet
-ok "python/.venv ready ($(python/.venv/bin/python --version))"
+uv venv .venv --python ">=3.9" --quiet
+ok ".venv ready ($(.venv/bin/python --version))"
 
 # ── 4. Python dev tools ───────────────────────────────────────────────────────
 step "Installing Python dev tools"
 
-uv pip install --quiet \
-  "maturin>=1.5,<2.0" \
-  "pytest>=7" \
-  "ruff>=0.4" \
-  "bandit>=1.7"
-
+# pyproject.toml [tool.uv] dev-dependencies drives this install.
+uv sync --dev --quiet
 ok "maturin, pytest, ruff, bandit installed"
 
 # ── 5. Build Rust workspace ───────────────────────────────────────────────────
@@ -96,7 +92,7 @@ ok "cargo build complete"
 step "Building Python extension (maturin develop)"
 (
   cd python
-  source ".venv/bin/activate"
+  source "../.venv/bin/activate"
   maturin develop --quiet
 )
 ok "opssignal._native built (abi3 — works on Python 3.9+)"
@@ -107,11 +103,8 @@ cargo test --workspace --exclude opssignal-py
 ok "Rust tests passed"
 
 step "Running Python tests"
-(
-  cd python
-  source ".venv/bin/activate"
-  pytest --tb=short -q
-)
+source .venv/bin/activate
+pytest --tb=short -q
 ok "Python tests passed"
 
 # ── 8. Git hooks ──────────────────────────────────────────────────────────────
@@ -137,11 +130,11 @@ fi
 echo ""
 echo -e "${GREEN}${BOLD}Setup complete.${NC}"
 echo ""
-echo "  Activate the Python venv:   source python/.venv/bin/activate"
+echo "  Activate the Python venv:   source .venv/bin/activate"
 echo "  Rebuild Python extension:   cd python && maturin develop"
-echo "  Run all tests:              cargo test --workspace && cd python && pytest"
+echo "  Run all tests:              cargo test --workspace && pytest"
 echo "  Lint:                       cargo clippy --workspace -- -D warnings"
-echo "                              ruff check python/"
+echo "                              ruff check python/opssignal python/tests"
 echo ""
 echo "  The pre-commit hook runs fmt, clippy, ast-grep, and ruff automatically."
 echo "  See CONTRIBUTING.md for project conventions."
