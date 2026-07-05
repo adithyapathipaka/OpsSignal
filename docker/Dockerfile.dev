@@ -1,6 +1,6 @@
 # Development image for OpsSignal contributors.
-# Includes: Rust stable (rustfmt + clippy), Python 3.11 via uv, Node 20 (ast-grep).
-# Python dependencies are baked in at /opt/venv — no uv sync needed on container start.
+# Includes: Rust stable (rustfmt + clippy), Python 3.11 via uv.
+# All Python dependencies (including ast-grep-cli) are baked in at /opt/venv.
 #
 # Build:  docker compose build
 # Shell:  docker compose run --rm dev
@@ -14,11 +14,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git ca-certificates \
     build-essential pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# ── Node 20 LTS (for ast-grep) ────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # ── uv + Python 3.11 ─────────────────────────────────────────────────────────
@@ -40,9 +35,6 @@ RUN uv venv /opt/venv --python 3.11 \
 
 # ── Rust dev components ───────────────────────────────────────────────────────
 RUN rustup component add rustfmt clippy
-
-# ── ast-grep structural linter ────────────────────────────────────────────────
-RUN npm install -g @ast-grep/cli --silent
 
 WORKDIR /workspace
 
