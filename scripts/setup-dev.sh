@@ -177,7 +177,7 @@ ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 # ── 2. Build dev image ────────────────────────────────────────────────────────
 step "Building Docker dev image"
 
-echo "  This takes a few minutes the first time (downloads Rust + Node base layers)."
+echo "  This takes a few minutes the first time (downloads Rust base layer + installs Python deps)."
 docker compose build
 ok "opssignal-dev image ready"
 
@@ -193,11 +193,21 @@ echo -e "${GREEN}${BOLD}Docker setup complete.${NC}"
 echo ""
 echo "  docker compose run --rm dev              # interactive shell (all tools)"
 echo "  docker compose run --rm dev bash scripts/check.sh  # full check suite"
-echo "  docker compose run --rm test             # same as above, one-liner"
+echo "  docker compose run --rm test             # full test suite"
 echo ""
-echo "  Inside the container, first-run bootstrap:"
-echo "    uv sync --dev && cd python && uv run maturin develop && cd .."
-echo ""
-echo "  See CONTRIBUTING.md for project conventions."
+
+read -rp "Open a shell in the container now? [Y/n]: " open_shell
+case "${open_shell:-Y}" in
+  [Yy]*|"")
+    echo ""
+    echo "  Tip: run 'cd python && maturin develop' once inside to build the extension."
+    echo "  Type 'exit' to leave the container."
+    echo ""
+    docker compose run --rm dev
+    ;;
+  *)
+    echo "  When ready: docker compose run --rm dev"
+    ;;
+esac
 
 fi  # end --docker
