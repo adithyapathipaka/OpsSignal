@@ -1,0 +1,20 @@
+id: rust-ffi-must-use-guarded
+language: Rust
+severity: error
+message: >
+  Every extern "C" function that returns CResult MUST delegate to
+  guarded(). A Rust panic that crosses the FFI boundary is undefined
+  behaviour in the host language — in Python this can segfault the
+  entire Airflow worker process. See crates/ffi/src/lib.rs for the
+  guarded() helper and CLAUDE.md hard-rule #1.
+rule:
+  all:
+    - pattern: |
+        unsafe extern "C" fn $NAME($$$ARGS) -> CResult {
+          $$$BODY
+        }
+    - not:
+        has:
+          pattern: guarded($$$)
+files:
+  - "crates/ffi/**"

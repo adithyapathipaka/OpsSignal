@@ -1,0 +1,19 @@
+id: rust-no-unwrap
+language: Rust
+severity: warning
+message: >
+  Avoid .unwrap() in production code — use ? to propagate the error or
+  .expect("context") to give the panic a meaningful message that survives
+  in crash logs.
+note: >
+  .unwrap() in tests is fine; suppress individual exceptions with
+  // sg-ignore on the preceding line when the value is provably non-None
+  (e.g. a string literal passed to CString::new).
+rule:
+  pattern: $EXPR.unwrap()
+# Scoped to core and CLI; ffi uses unsafe primitives where expect() is
+# used directly on literals.
+files:
+  - "crates/core/**"
+  - "crates/cli/**"
+  - "crates/python/**"

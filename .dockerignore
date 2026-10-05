@@ -1,0 +1,27 @@
+# Build artifacts — these are large and should never be copied into the
+# Docker build context. They are provided as named volumes at runtime instead.
+target/
+.venv/
+python/.venv/
+
+# Host-side caches
+.ruff_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Dev tooling state
+.githooks/
+.git/
+
+# Secrets / local config
+signal.yaml
+.env
+*.db
+*.db-journal
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store

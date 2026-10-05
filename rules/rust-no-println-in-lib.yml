@@ -1,0 +1,15 @@
+id: rust-no-println-in-lib
+language: Rust
+severity: warning
+message: >
+  Use tracing::info!/warn!/error! instead of println! in library code.
+  println! bypasses the subscriber and cannot be silenced or structured
+  by the host application.
+rule:
+  pattern: println!($$$MSG)
+# console.rs is the one place where printing is intentional — it IS the
+# console provider whose job is to write to stdout.
+files:
+  - "crates/core/**"
+ignoreFiles:
+  - "crates/core/src/providers/console.rs"

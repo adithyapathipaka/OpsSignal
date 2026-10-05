@@ -1,0 +1,41 @@
+# Development image for OpsSignal contributors.
+# Includes: Rust stable (rustfmt + clippy), Python 3.11 via uv.
+# All Python dependencies (including ast-grep-cli) are baked in at /opt/venv.
+#
+# Build:  docker compose build
+# Shell:  docker compose run --rm dev
+# Tests:  docker compose run --rm test   (or: docker compose run --rm dev bash scripts/check.sh)
+
+FROM rust:1-slim-bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# ── System deps ───────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git ca-certificates \
+    build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── uv + Python 3.11 ─────────────────────────────────────────────────────────
+ENV PATH="/root/.local/bin:$PATH"
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv python install 3.11
+
+# ── Python dependencies (baked into image) ───────────────────────────────────
+# Venv lives at /opt/venv so the /workspace volume mount can't shadow it.
+# --no-install-project: source isn't available at build time; maturin develop
+# installs the compiled extension at container runtime.
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY pyproject.toml uv.lock /tmp/opssignal-deps/
+RUN uv venv /opt/venv --python 3.11 \
+    && cd /tmp/opssignal-deps \
+    && uv sync --dev --no-install-project \
+    && rm -rf /tmp/opssignal-deps
+
+# ── Rust dev components ───────────────────────────────────────────────────────
+RUN rustup component add rustfmt clippy
+
+WORKDIR /workspace
+
+CMD ["bash"]
