@@ -145,6 +145,8 @@ fn compute_dedup_key(input: &SignalInput) -> String {
 pub enum SignalError {
     #[error("validation failed: {0}")]
     Validation(String),
+    #[error("config error: {0}")]
+    Config(String),
     #[error("delivery failed: {0}")]
     Delivery(String),
     #[error("sink write failed: {0}")]
