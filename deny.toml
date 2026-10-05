@@ -22,6 +22,9 @@ allow = [
 # Ring uses a custom license that is effectively MIT+ISC.
 exceptions = [
     { allow = ["ISC", "MIT", "OpenSSL"], name = "ring" },
+    # Mozilla's root CA bundle, pulled in by reqwest's rustls-tls feature.
+    # CDLA-Permissive-2.0 is a permissive data license.
+    { allow = ["CDLA-Permissive-2.0"], name = "webpki-roots" },
 ]
 
 [bans]

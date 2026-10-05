@@ -22,7 +22,7 @@ uv sync --dev --quiet
 ok "dev dependencies up to date"
 
 step "maturin develop"
-(cd python && uv run maturin develop --quiet)
+(cd python && uv run --project .. maturin develop --quiet)
 ok "Python extension built"
 
 step "cargo test"
