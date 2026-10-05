@@ -6,17 +6,30 @@
 //! things fail."
 
 use opssignal_core::signal::{Severity, SignalInput};
-use pyo3::exceptions::PyValueError;
+use opssignal_core::SignalClient;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use std::sync::OnceLock;
+
+/// Process-global client, built from signal.yaml on the first notify()
+/// call. A config error is cached too, so every later call raises the
+/// same error instead of re-reading a broken file on each alert.
+static CLIENT: OnceLock<Result<SignalClient, String>> = OnceLock::new();
+
+fn client() -> PyResult<&'static SignalClient> {
+    CLIENT
+        .get_or_init(|| SignalClient::from_env().map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(|e| PyRuntimeError::new_err(format!("opssignal is not configured: {e}")))
+}
 
 /// notify(source, event_type, title, severity="info", message=None,
 ///         environment=None, metadata=None)
 ///
-/// v0.1 scope note: this currently validates and constructs a Signal
-/// and returns immediately (fire-and-forget semantics matching
-/// notify_async in the core). Wiring to a configured SignalClient
-/// (reading routing/providers from signal.yaml) is the next
-/// implementation step — see crates/core/src/lib.rs SignalClient.
+/// Validates the signal, then hands it to the process-global
+/// SignalClient with fire-and-forget semantics (`notify_async`).
+/// Raises ValueError for invalid input and RuntimeError if signal.yaml
+/// cannot be loaded.
 #[pyfunction]
 #[pyo3(signature = (source, event_type, title, severity="info", message=None, environment=None))]
 fn notify(
@@ -45,11 +58,7 @@ fn notify(
     opssignal_core::signal::validate(&input)
         .map_err(|e| PyValueError::new_err(format!("invalid signal: {e}")))?;
 
-    // TODO(v0.1): hold a process-global SignalClient (lazily built from
-    // signal.yaml on first call) and call client.notify_async(input)
-    // here instead of just validating and discarding.
-    eprintln!("[opssignal] notify() validated input but is not yet wired to a SignalClient");
-
+    client()?.notify_async(input);
     Ok(())
 }
 

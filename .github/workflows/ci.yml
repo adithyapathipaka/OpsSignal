@@ -46,7 +46,7 @@ jobs:
       - name: Install dev tools
         run: uv sync --dev
       - name: Build extension
-        run: cd python && uv run maturin develop
+        run: cd python && uv run --project .. maturin develop
       - name: Run tests
         run: uv run pytest --tb=short -q
 

@@ -10,8 +10,21 @@
 //! The macro below is the only sanctioned way to define an FFI entry
 //! point in this crate. Do not write a raw `extern "C" fn` elsewhere.
 
+use opssignal_core::SignalClient;
 use std::ffi::{c_char, CStr, CString};
 use std::panic;
+use std::sync::OnceLock;
+
+/// Process-global client, built from signal.yaml on first use. A config
+/// error is cached and returned on every call.
+static CLIENT: OnceLock<Result<SignalClient, String>> = OnceLock::new();
+
+fn client() -> Result<&'static SignalClient, String> {
+    CLIENT
+        .get_or_init(|| SignalClient::from_env().map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(|e| format!("opssignal is not configured: {e}"))
+}
 
 /// Result struct returned across the FFI boundary. Both fields are
 /// always present; `error` is null on success. Callers in each language
@@ -67,15 +80,11 @@ pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult
             .to_str()
             .map_err(|e| format!("invalid UTF-8 in signal payload: {e}"))?;
 
-        let _input: opssignal_core::signal::SignalInput =
+        let input: opssignal_core::signal::SignalInput =
             serde_json::from_str(json_str).map_err(|e| format!("invalid signal JSON: {e}"))?;
+        opssignal_core::signal::validate(&input).map_err(|e| e.to_string())?;
 
-        // NOTE: wiring to a long-lived SignalClient instance (held via a
-        // process-global or handle passed from the host language) is the
-        // next step here — left as a TODO marker for the implementation
-        // PR, not hidden silently.
-        // TODO(v0.1): route `_input` through a SignalClient instance.
-
+        client()?.notify_async(input);
         Ok(())
     })
 }
