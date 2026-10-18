@@ -35,6 +35,52 @@ pub struct Config {
     pub storage: StorageConfig,
 }
 
+/// One file of a layered config: what it sets itself, plus the files
+/// it builds on. [`Config::from_layers`] merges a chain of these.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layer {
+    /// Parent files, as URLs or paths relative to this file. Each
+    /// parent is merged in before this file, so this file wins.
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub extends: Vec<String>,
+    #[serde(default)]
+    pub providers: ProvidersConfig,
+    #[serde(default)]
+    pub routes: Vec<Route>,
+    #[serde(default)]
+    pub storage: Option<StorageConfig>,
+}
+
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
+}
+
+impl Layer {
+    /// Parses one file, interpolating `${VAR}` placeholders. Routes are
+    /// checked only once the whole chain is merged, since a team file
+    /// may route to a provider its parent configures.
+    pub fn from_yaml_str(text: &str) -> Result<Self, SignalError> {
+        let mut value: serde_yaml::Value =
+            serde_yaml::from_str(text).map_err(|e| config_err(format!("invalid YAML: {e}")))?;
+        // An empty file parses as null; treat it as "all defaults".
+        if value.is_null() {
+            value = serde_yaml::Value::Mapping(Default::default());
+        }
+        interpolate_env(&mut value)?;
+        serde_yaml::from_value(value).map_err(|e| config_err(e.to_string()))
+    }
+}
+
 /// Typed per provider, with unknown keys rejected, so a typo like
 /// `slak:` is a load-time error rather than a silently missing provider.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -100,38 +146,71 @@ fn default_sqlite_path() -> String {
 }
 
 impl Config {
-    /// Parses a config from YAML text, interpolating `${VAR}`
-    /// placeholders and checking that every route names a configured
-    /// provider.
+    /// Parses a single, self-contained config from YAML text,
+    /// interpolating `${VAR}` placeholders and checking that every route
+    /// names a configured provider. A file that uses `extends` needs to
+    /// be loaded from where it lives, with [`Config::from_file`] or
+    /// `$SIGNAL_CONFIG`, so its parents can be found.
     pub fn from_yaml_str(text: &str) -> Result<Self, SignalError> {
-        let mut value: serde_yaml::Value =
-            serde_yaml::from_str(text).map_err(|e| config_err(format!("invalid YAML: {e}")))?;
-        // An empty file parses as null; treat it as "all defaults".
-        if value.is_null() {
-            value = serde_yaml::Value::Mapping(Default::default());
+        let layer = Layer::from_yaml_str(text)?;
+        if !layer.extends.is_empty() {
+            return Err(config_err(
+                "`extends` needs the file's location; load it with Config::from_file or $SIGNAL_CONFIG",
+            ));
         }
-        interpolate_env(&mut value)?;
-        let config: Config =
-            serde_yaml::from_value(value).map_err(|e| config_err(e.to_string()))?;
-        config.check_routes()?;
+        Self::from_layers([(None, layer)])
+    }
+
+    /// Merges a chain of layers, given lowest priority first, each with
+    /// the name of the file it came from (for error messages):
+    ///
+    /// - providers merge by name, and a later layer's entry replaces an
+    ///   earlier one's;
+    /// - a later layer's routes go before the earlier layers' routes,
+    ///   so the more specific file is matched first and the shared
+    ///   defaults still catch everything else;
+    /// - `storage` comes from the last layer that sets it.
+    ///
+    /// Routes are checked against the merged providers.
+    pub fn from_layers(
+        layers: impl IntoIterator<Item = (Option<String>, Layer)>,
+    ) -> Result<Self, SignalError> {
+        let mut config = Config::default();
+        // (file, index within that file) for each merged route.
+        let mut origins: Vec<(Option<String>, usize)> = Vec::new();
+        for (name, layer) in layers {
+            let p = layer.providers;
+            config.providers.console = p.console.or(config.providers.console.take());
+            config.providers.slack = p.slack.or(config.providers.slack.take());
+            config.providers.webhook = p.webhook.or(config.providers.webhook.take());
+            if let Some(storage) = layer.storage {
+                config.storage = storage;
+            }
+            let mut routes = layer.routes;
+            let mut route_origins: Vec<_> = (0..routes.len()).map(|i| (name.clone(), i)).collect();
+            routes.append(&mut config.routes);
+            route_origins.append(&mut origins);
+            config.routes = routes;
+            origins = route_origins;
+        }
+        config.check_routes(&origins)?;
         Ok(config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, SignalError> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| config_err(format!("cannot read {}: {e}", path.display())))?;
-        Self::from_yaml_str(&text)
-            .map_err(|e| config_err(format!("{}: {}", path.display(), strip_prefix(&e))))
+        let source = ConfigSource::File(path.to_path_buf());
+        source::load_blocking(std::slice::from_ref(&source), &LoadOptions::once()).map(|l| l.config)
     }
 
-    /// `$SIGNAL_CONFIG` if set (a local file, which must then exist, or
-    /// a remote URL), else `./signal.yaml` if present, else the
-    /// zero-config default. A remote source is fetched once, with the
-    /// cache fallback described in [`crate::source`].
+    /// `$SIGNAL_CONFIG` if set (one or more comma-separated local
+    /// files, which must then exist, or remote URLs), else
+    /// `./signal.yaml` if present, else the zero-config default. Remote
+    /// files are fetched once, with the cache fallback described in
+    /// [`crate::source`].
     pub fn discover() -> Result<Self, SignalError> {
         match ConfigSource::discover()? {
-            Some(source) => {
-                source::load_blocking(&source, &LoadOptions::from_env()?).map(|l| l.config)
+            Some(sources) => {
+                source::load_blocking(&sources, &LoadOptions::from_env()?).map(|l| l.config)
             }
             None => Ok(Config::default()),
         }
@@ -156,16 +235,20 @@ impl Config {
         names
     }
 
-    fn check_routes(&self) -> Result<(), SignalError> {
+    fn check_routes(&self, origins: &[(Option<String>, usize)]) -> Result<(), SignalError> {
         let known = self.provider_names();
-        for (i, route) in self.routes.iter().enumerate() {
+        for (route, (file, i)) in self.routes.iter().zip(origins) {
+            let at = match file {
+                Some(file) => format!("{file}: routes[{i}]"),
+                None => format!("routes[{i}]"),
+            };
             if route.providers.is_empty() {
-                return Err(config_err(format!("routes[{i}] lists no providers")));
+                return Err(config_err(format!("{at} lists no providers")));
             }
             for name in &route.providers {
                 if !known.contains(&name.as_str()) {
                     return Err(config_err(format!(
-                        "routes[{i}] references provider '{name}', which is not configured under providers (configured: {})",
+                        "{at} references provider '{name}', which is not configured under providers (configured: {})",
                         known.join(", ")
                     )));
                 }
@@ -177,13 +260,6 @@ impl Config {
 
 fn config_err(msg: impl Into<String>) -> SignalError {
     SignalError::Config(msg.into())
-}
-
-fn strip_prefix(e: &SignalError) -> String {
-    match e {
-        SignalError::Config(msg) => msg.clone(),
-        other => other.to_string(),
-    }
 }
 
 fn interpolate_env(value: &mut serde_yaml::Value) -> Result<(), SignalError> {

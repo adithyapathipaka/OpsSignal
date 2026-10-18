@@ -18,7 +18,10 @@ OpsSignal looks for its config in this order:
 3. Nothing found: the zero-config default (console provider, SQLite sink at
    `./signals.db`).
 
-The CLI also accepts `--config <path or URL>`, which overrides both.
+`SIGNAL_CONFIG` can also list several files, separated by commas, which are
+merged as described in [Layered configs](#layered-configs). The CLI also
+accepts `--config <path or URL>` (or a comma-separated list), which overrides
+both.
 
 ### Installing cloud support
 
@@ -98,6 +101,84 @@ The CLI sends one signal and exits, so it loads the config once.
 
 See [Kubernetes](kubernetes.md) for a ConfigMap and Secret setup that uses
 live reload.
+
+## Layered configs
+
+Large organisations rarely keep every route in one file. OpsSignal lets a file
+build on others, so a platform team can own a default and each team adds only
+what is its own:
+
+```yaml
+# default.yaml, owned by the platform team
+providers:
+  slack:
+    webhook_url: "${ORG_SLACK_WEBHOOK}"
+routes:
+  - match: { severity: [error, critical] }
+    providers: [slack]
+storage:
+  path: /var/lib/opssignal/signals.db
+```
+
+```yaml
+# teams/payments.yaml
+extends: ../default.yaml
+providers:
+  webhook:
+    url: "${PAYMENTS_PAGER_URL}"
+routes:
+  - match: { source: payments, severity: [critical] }
+    providers: [webhook, slack]
+```
+
+Point `SIGNAL_CONFIG` at the team file and the default comes with it.
+
+There are two ways to combine files, and they can be mixed:
+
+- **`extends:`** in a file names one parent, or a list of them. A relative
+  entry is resolved against the file's own location: the same directory, or
+  the same bucket or container for `s3://`, `gs://` and `az://`, or the same
+  site for `https://`. A URL or an absolute path is used as is.
+- **A list in `SIGNAL_CONFIG`**, such as
+  `SIGNAL_CONFIG=teams/payments.yaml,shared/db-alerts.yaml`. Use this when a
+  service needs alerts that several teams share, without one team file having
+  to name another.
+
+Files are merged lowest priority first: parents before the file that extends
+them, and earlier entries of a list before later ones. A file reached more
+than once, such as a default that every team extends, is loaded once.
+
+| Section | How it merges |
+|---|---|
+| `providers` | By name. A later file's `slack`, `webhook` or `console` replaces the earlier one whole. |
+| `routes` | Added together. A later file's routes go first, so the more specific file is matched first and its providers are tried first, while the inherited routes still catch everything else. |
+| `storage` | Taken from the last file that sets it. |
+
+Because delivery stops at the first provider that succeeds (see
+[`routes`](#routes)), a team route that matches a signal effectively decides
+where it goes, and the inherited providers become its fallbacks. Routes are
+checked after merging, so a team file can route to a provider that only its
+parent configures. A route naming an unknown provider is reported with the
+file it is in, such as `teams/payments.yaml: routes[0] references provider
+'pagerduty'`.
+
+Rules that keep chains manageable:
+
+- A cycle (`a.yaml` extends `b.yaml`, which extends `a.yaml`) is a load-time
+  error that shows the loop.
+- A chain can be at most 8 files deep and load at most 64 files.
+- A remote file can extend other remote files but not local paths, so a file
+  served over the network can never read the host's disk. A local file can
+  extend a remote one, such as a team ConfigMap that extends a default in a
+  bucket.
+
+Every file in the chain is reloaded and cached on its own. An edit to the
+default reaches every team on the next check. When a remote file can't be
+fetched, its cached copy is used; if the fresh files load but no longer fit
+together (a team routes to a provider someone just removed from the default),
+the cached copies of the whole chain are used instead. Only if neither works
+does OpsSignal start on the zero-config default. A missing or broken local
+file in the chain stops loading, as a single local file does.
 
 ## Example
 
@@ -188,6 +269,8 @@ These all stop the config from loading, and the message says which rule failed:
 - an unknown key anywhere in the file
 - an unset `${VAR}`, or an unterminated or empty `${}` placeholder
 - a route that references an unconfigured provider, or lists no providers
+- an `extends` that is not a path or a list of paths, forms a cycle, goes more
+  than 8 files deep, or (from a remote file) names a local path
 - `SIGNAL_CONFIG` pointing at a path that is not a file, or using an
   unsupported URL scheme
 - `SIGNAL_CONFIG_REFRESH_SECS` that is not a whole number

@@ -12,7 +12,7 @@ NOTIFY = """
 from opssignal import notify
 try:
     notify(source="pytest", event_type="check", title="t")
-    print("ok")
+    print("NOTIFY-RETURNED")
 except RuntimeError as e:
     print("RuntimeError:", e)
 """
@@ -82,6 +82,6 @@ def test_s3_config_loads_through_the_aws_addon(tmp_path):
         server.shutdown()
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith("ok"), result.stdout
+    assert "NOTIFY-RETURNED" in result.stdout, result.stdout
     # The sink path only exists in the S3 copy of the config.
     assert db.exists()

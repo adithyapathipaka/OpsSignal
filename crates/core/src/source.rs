@@ -19,7 +19,12 @@
 //! secret is ever written to the cache. If the source can't be reached
 //! or returns a broken file, the last good cached copy is used instead:
 //! a bucket outage must never be the reason an alert goes missing.
+//!
+//! `$SIGNAL_CONFIG` may also list several files, comma separated, and
+//! any file may `extends:` others; see [`Config::from_layers`] for how
+//! they merge. Each remote file in the chain is cached on its own.
 
+use crate::chain::{self, Mode};
 use crate::config::{Config, CONFIG_ENV_VAR, DEFAULT_CONFIG_FILE};
 use crate::signal::SignalError;
 use sha2::{Digest, Sha256};
@@ -108,24 +113,112 @@ impl ConfigSource {
         Ok(ConfigSource::File(PathBuf::from(raw)))
     }
 
+    /// Parses a `$SIGNAL_CONFIG` value that lists one or more files,
+    /// comma separated, lowest priority first.
+    pub fn parse_list(raw: &str) -> Result<Vec<Self>, SignalError> {
+        let sources = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(Self::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        if sources.is_empty() {
+            return Err(config_err(format!("'{raw}' names no config file")));
+        }
+        Ok(sources)
+    }
+
     /// `$SIGNAL_CONFIG` if set, else `./signal.yaml` if it exists. A
     /// local `$SIGNAL_CONFIG` path that is not a file is an error rather
     /// than a silent fall back to defaults.
-    pub fn discover() -> Result<Option<Self>, SignalError> {
+    pub fn discover() -> Result<Option<Vec<Self>>, SignalError> {
         if let Some(raw) = std::env::var_os(CONFIG_ENV_VAR) {
-            let source = Self::parse(&raw.to_string_lossy())?;
-            if let ConfigSource::File(path) = &source {
-                if !path.is_file() {
-                    return Err(config_err(format!(
-                        "${CONFIG_ENV_VAR} points to {}, which is not a file",
-                        path.display()
-                    )));
+            let sources = Self::parse_list(&raw.to_string_lossy())?;
+            for source in &sources {
+                if let ConfigSource::File(path) = source {
+                    if !path.is_file() {
+                        return Err(config_err(format!(
+                            "${CONFIG_ENV_VAR} points to {}, which is not a file",
+                            path.display()
+                        )));
+                    }
                 }
             }
-            return Ok(Some(source));
+            return Ok(Some(sources));
         }
         let local = PathBuf::from(DEFAULT_CONFIG_FILE);
-        Ok(local.is_file().then_some(ConfigSource::File(local)))
+        Ok(local.is_file().then(|| vec![ConfigSource::File(local)]))
+    }
+
+    /// Resolves an `extends` entry of this file. A URL or an absolute
+    /// path is taken as is; anything else is relative to this file's
+    /// own location, in the same bucket, container or directory.
+    ///
+    /// A remote file may only extend other remote files: a config
+    /// served over the network must not be able to read local paths.
+    pub fn join(&self, reference: &str) -> Result<Self, SignalError> {
+        let reference = reference.trim();
+        let absolute = reference.contains("://") || Path::new(reference).is_absolute();
+        let joined = match self {
+            _ if absolute => Self::parse(reference)?,
+            ConfigSource::File(path) => ConfigSource::File(normalize(
+                &path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(reference),
+            )),
+            ConfigSource::Http(url) => {
+                let joined = reqwest::Url::parse(url)
+                    .and_then(|base| base.join(reference))
+                    .map_err(|e| {
+                        config_err(format!("{self}: cannot resolve '{reference}': {e}"))
+                    })?;
+                Self::parse(joined.as_str())?
+            }
+            ConfigSource::S3 { bucket, key } => ConfigSource::S3 {
+                bucket: bucket.clone(),
+                key: self.join_key(key, reference)?,
+            },
+            ConfigSource::Gcs { bucket, object } => ConfigSource::Gcs {
+                bucket: bucket.clone(),
+                object: self.join_key(object, reference)?,
+            },
+            ConfigSource::Azure { container, blob } => ConfigSource::Azure {
+                container: container.clone(),
+                blob: self.join_key(blob, reference)?,
+            },
+        };
+        if self.is_remote() && !joined.is_remote() {
+            return Err(config_err(format!(
+                "{self}: a remote config cannot extend the local file {joined}"
+            )));
+        }
+        Ok(joined)
+    }
+
+    /// `reference` resolved against the "directory" of object `key`.
+    fn join_key(&self, key: &str, reference: &str) -> Result<String, SignalError> {
+        let mut parts: Vec<&str> = key.split('/').collect();
+        parts.pop();
+        for segment in reference.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return Err(config_err(format!(
+                            "{self}: '{reference}' points outside the bucket"
+                        )));
+                    }
+                }
+                name => parts.push(name),
+            }
+        }
+        if parts.is_empty() {
+            return Err(config_err(format!(
+                "{self}: '{reference}' does not name a file"
+            )));
+        }
+        Ok(parts.join("/"))
     }
 
     /// Whether this build can read the source at all, either natively
@@ -154,7 +247,7 @@ impl ConfigSource {
     pub async fn fetch(&self) -> Result<String, SignalError> {
         self.fetch_unprefixed()
             .await
-            .map_err(|e| config_err(format!("{self}: {}", strip_prefix(&e))))
+            .map_err(|e| config_err(format!("{self}: {}", message(&e))))
     }
 
     /// [`ConfigSource::fetch`] without the source named in the error,
@@ -170,6 +263,26 @@ impl ConfigSource {
             ConfigSource::Azure { container, blob } => fetch_azure(container, blob).await,
         }
     }
+}
+
+/// Drops `.` and folds `..` into its parent without touching the disk,
+/// so two teams reaching one shared file by different relative paths
+/// load it once.
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn split_bucket(rest: &str, raw: &str) -> Result<(String, String), SignalError> {
@@ -448,7 +561,7 @@ pub fn fetch_blocking(url: &str) -> Result<String, String> {
             .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
             .block_on(source.fetch_unprefixed())
     });
-    fetched.map_err(|e| strip_prefix(&e))
+    fetched.map_err(|e| message(&e))
 }
 
 /// How a client loads and refreshes its config.
@@ -519,69 +632,71 @@ fn default_cache_dir() -> Option<PathBuf> {
     Some(base.join("opssignal"))
 }
 
-/// The config a client starts with, plus the raw text it came from so
-/// the reloader can tell when the source has changed.
+/// The config a client starts with, plus the raw text of every file it
+/// was built from so the reloader can tell when one has changed.
 pub(crate) struct Loaded {
     pub config: Config,
-    pub text: Option<String>,
+    pub texts: Option<Texts>,
 }
 
+/// `(source, raw text)` for each file of a chain, in merge order.
+pub(crate) type Texts = Vec<(String, String)>;
+
 /// Initial load. A local file must exist and parse, as before. A remote
-/// source falls back to the cached copy, then to the zero-config
-/// default, logging why, so that startup never fails on a network blip.
+/// file falls back to its cached copy; if the chain still can't be
+/// built, the client starts on the zero-config default, logging why, so
+/// that startup never fails on a network blip.
 pub(crate) async fn load_initial(
-    source: &ConfigSource,
+    roots: &[ConfigSource],
     opts: &LoadOptions,
 ) -> Result<Loaded, SignalError> {
-    source.check_supported()?;
-    if !source.is_remote() {
-        let text = source.fetch().await?;
-        let config = parse(source, &text)?;
-        return Ok(Loaded {
-            config,
-            text: Some(text),
-        });
+    for root in roots {
+        root.check_supported()?;
     }
-
-    let cache = opts.cache_path(source);
-    let fresh = match source.fetch().await {
-        Ok(text) => parse(source, &text).map(|config| (config, text)),
+    let built = match chain::walk(roots, Mode::Startup(opts)).await {
+        Ok(files) => chain::merge(&files).map(|config| (config, files)),
         Err(e) => Err(e),
     };
-    match fresh {
-        Ok((config, text)) => {
-            if let Some(path) = &cache {
-                write_cache(path, &text);
+    let built = match built {
+        Ok(built) => Ok(built),
+        // Every file fetched, but together they don't make a valid
+        // config (say a remote team file now routes to a provider
+        // nobody configures). The cached copies did, last time.
+        Err(e) if !e.fatal && opts.cache_dir.is_some() => {
+            match chain::walk(roots, Mode::CacheOnly(opts)).await {
+                Ok(files) => match chain::merge(&files) {
+                    Ok(config) => {
+                        tracing::warn!("{}; using the cached copies", e.err);
+                        Ok((config, files))
+                    }
+                    Err(_) => Err(e),
+                },
+                Err(_) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
+    };
+    match built {
+        Ok((config, files)) => {
+            for (fetched, _) in &files {
+                if let Some(path) = opts.cache_path(&fetched.source) {
+                    write_cache(&path, &fetched.text);
+                }
             }
             Ok(Loaded {
                 config,
-                text: Some(text),
+                texts: Some(chain::texts(&files)),
             })
         }
+        Err(e) if e.fatal => Err(e.err),
         Err(e) => {
-            if let Some(path) = &cache {
-                if let Ok(text) = std::fs::read_to_string(path) {
-                    match parse(source, &text) {
-                        Ok(config) => {
-                            tracing::warn!("{e}; using the cached copy from {}", path.display());
-                            return Ok(Loaded {
-                                config,
-                                text: Some(text),
-                            });
-                        }
-                        Err(cache_err) => tracing::warn!(
-                            "cached config at {} is unusable: {cache_err}",
-                            path.display()
-                        ),
-                    }
-                }
-            }
             tracing::error!(
-                "{e}; no usable cached copy, starting with the default config (console only)"
+                "{}; no usable cached copy, starting with the default config (console only)",
+                e.err
             );
             Ok(Loaded {
                 config: Config::default(),
-                text: None,
+                texts: None,
             })
         }
     }
@@ -590,18 +705,14 @@ pub(crate) async fn load_initial(
 /// [`load_initial`] on a throwaway runtime, for callers that are not
 /// async and have no client runtime yet.
 pub(crate) fn load_blocking(
-    source: &ConfigSource,
+    roots: &[ConfigSource],
     opts: &LoadOptions,
 ) -> Result<Loaded, SignalError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
-        .block_on(load_initial(source, opts))
-}
-
-pub(crate) fn parse(source: &ConfigSource, text: &str) -> Result<Config, SignalError> {
-    Config::from_yaml_str(text).map_err(|e| config_err(format!("{source}: {}", strip_prefix(&e))))
+        .block_on(load_initial(roots, opts))
 }
 
 /// Write-then-rename so a crash mid-write never leaves a truncated
@@ -625,7 +736,8 @@ fn config_err(msg: impl Into<String>) -> SignalError {
     SignalError::Config(msg.into())
 }
 
-fn strip_prefix(e: &SignalError) -> String {
+/// The message of a config error, without the "config error:" prefix.
+pub(crate) fn message(e: &SignalError) -> String {
     match e {
         SignalError::Config(msg) => msg.clone(),
         other => other.to_string(),
@@ -705,6 +817,56 @@ mod tests {
                 raw
             );
         }
+    }
+
+    #[test]
+    fn extends_resolves_against_the_parent_location() {
+        let join = |base: &str, reference: &str| {
+            ConfigSource::parse(base)
+                .expect("valid source")
+                .join(reference)
+                .map(|s| s.to_string())
+        };
+        assert_eq!(
+            join("s3://b/teams/payments.yaml", "../default.yaml").expect("joined"),
+            "s3://b/default.yaml"
+        );
+        assert_eq!(
+            join("gs://b/teams/a.yaml", "./shared/db.yaml").expect("joined"),
+            "gs://b/teams/shared/db.yaml"
+        );
+        assert_eq!(
+            join("az://c/a.yaml", "s3://other/x.yaml").expect("joined"),
+            "s3://other/x.yaml"
+        );
+        assert_eq!(
+            join("https://cfg.test/teams/a.yaml", "../default.yaml").expect("joined"),
+            "https://cfg.test/default.yaml"
+        );
+        assert_eq!(
+            join("/etc/opssignal/teams/a.yaml", "../default.yaml").expect("joined"),
+            "/etc/opssignal/default.yaml"
+        );
+        assert_eq!(join("a.yaml", "../x.yaml").expect("joined"), "../x.yaml");
+        assert!(join("s3://b/a.yaml", "../../x.yaml").is_err());
+        assert!(join("s3://b/a.yaml", "/etc/passwd").is_err());
+        assert!(join("https://cfg.test/a.yaml", "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn a_config_list_is_comma_separated() {
+        let list = ConfigSource::parse_list(" a.yaml, s3://b/k.yaml ,").expect("valid list");
+        assert_eq!(
+            list,
+            [
+                ConfigSource::File("a.yaml".into()),
+                ConfigSource::S3 {
+                    bucket: "b".into(),
+                    key: "k.yaml".into()
+                }
+            ]
+        );
+        assert!(ConfigSource::parse_list(" , ").is_err());
     }
 
     #[test]

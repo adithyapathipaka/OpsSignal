@@ -181,6 +181,16 @@ Two reliability rules shape this code:
   deliveries keep the `Arc` they started with. A failed reload keeps the
   current pipeline. The sink is never reopened live.
 
+A config can be layered: a file may `extends:` others, and `SIGNAL_CONFIG` may
+list several (`crates/core/src/chain.rs`). The chain is walked depth first
+into a list of files, lowest priority first, with each file loaded once,
+cycles rejected, and a depth (8) and file (64) limit. `Config::from_layers`
+merges it: providers by name, later routes first, `storage` from the last file
+that sets it. Routes are checked only after the merge. Each remote file is
+cached on its own, and the reloader re-walks the whole chain on every poll and
+compares the texts of every file, so a change to a shared default reaches all
+the teams that extend it. A remote file may not extend a local path.
+
 Polling is used instead of filesystem notifications because Kubernetes updates
 ConfigMap mounts by swapping a symlink, which file watchers often miss, and
 the same loop covers remote sources.

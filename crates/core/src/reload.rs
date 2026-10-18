@@ -1,30 +1,32 @@
 //! Background config reload.
 //!
-//! Polls the config source on a fixed interval and swaps in a new
-//! [`Pipeline`] when the text changes. Polling (rather than inotify) is
-//! deliberate: a Kubernetes ConfigMap mount updates by swapping a
-//! symlink, which file watchers often miss, and the same loop then
-//! covers remote sources too.
+//! Polls every file of the config chain on a fixed interval and swaps
+//! in a new [`Pipeline`] when any of them changes. Polling (rather than
+//! inotify) is deliberate: a Kubernetes ConfigMap mount updates by
+//! swapping a symlink, which file watchers often miss, and the same
+//! loop then covers remote sources too.
 //!
 //! The storage section is not reloaded: reopening the sink under live
 //! traffic could lose writes, so a changed `storage:` block is logged
 //! and applied on the next restart.
 
+use crate::chain::{self, Mode};
 use crate::config::StorageConfig;
-use crate::source::{self, ConfigSource};
+use crate::source::{self, ConfigSource, LoadOptions, Texts};
 use crate::{Pipeline, SharedPipeline};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) struct Reloader {
-    pub source: ConfigSource,
-    pub cache: Option<PathBuf>,
+    /// The files named in `$SIGNAL_CONFIG`; their `extends` are
+    /// re-resolved on every poll, so a new parent is picked up too.
+    pub roots: Vec<ConfigSource>,
+    pub opts: LoadOptions,
     pub every: Duration,
-    /// The text the current pipeline was built from. `None` when the
+    /// The texts the current pipeline was built from. `None` when the
     /// client started on the default config, so the first good fetch
     /// is always applied.
-    pub last_text: Option<String>,
+    pub last_texts: Option<Texts>,
     pub storage: StorageConfig,
     pub pipeline: SharedPipeline,
 }
@@ -44,35 +46,47 @@ pub(crate) fn spawn(runtime: &tokio::runtime::Runtime, mut reloader: Reloader) {
 impl Reloader {
     /// One poll. Every failure keeps the pipeline already in place.
     pub(crate) async fn check(&mut self) {
-        let text = match self.source.fetch().await {
-            Ok(text) => text,
+        let files = match chain::walk(&self.roots, Mode::Reload).await {
+            Ok(files) => files,
             Err(e) => {
-                tracing::warn!("config reload skipped: {e}; keeping the current config");
+                tracing::warn!(
+                    "config reload skipped: {}; keeping the current config",
+                    e.err
+                );
                 return;
             }
         };
-        if self.last_text.as_deref() == Some(text.as_str()) {
+        let texts = chain::texts(&files);
+        if self.last_texts.as_ref() == Some(&texts) {
             return;
         }
-        let config = match source::parse(&self.source, &text) {
+        let config = match chain::merge(&files) {
             Ok(config) => config,
             Err(e) => {
-                tracing::error!("config reload rejected: {e}; keeping the current config");
+                tracing::error!(
+                    "config reload rejected: {}; keeping the current config",
+                    e.err
+                );
                 return;
             }
         };
+        let names = self.describe();
         if config.storage != self.storage {
-            tracing::warn!(
-                "{}: storage settings changed; they take effect after a restart",
-                self.source
-            );
+            tracing::warn!("{names}: storage settings changed; they take effect after a restart");
         }
         let next = Arc::new(Pipeline::from_config(&config));
         *self.pipeline.write().unwrap_or_else(|e| e.into_inner()) = next;
-        if let Some(cache) = &self.cache {
-            source::write_cache(cache, &text);
+        for (fetched, _) in &files {
+            if let Some(path) = self.opts.cache_path(&fetched.source) {
+                source::write_cache(&path, &fetched.text);
+            }
         }
-        self.last_text = Some(text);
-        tracing::info!("reloaded config from {}", self.source);
+        self.last_texts = Some(texts);
+        tracing::info!("reloaded config from {names}");
+    }
+
+    fn describe(&self) -> String {
+        let names: Vec<String> = self.roots.iter().map(ToString::to_string).collect();
+        names.join(", ")
     }
 }
