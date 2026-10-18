@@ -12,5 +12,5 @@ name = "_gcp"
 crate-type = ["cdylib"]
 
 [dependencies]
-opssignal-core = { path = "../core", features = ["gcs"] }
+opssignal-core = { path = "../core", features = ["gcp"] }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }

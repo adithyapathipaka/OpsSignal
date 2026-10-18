@@ -1,7 +1,8 @@
 //! The `opssignal-azure` add-on: lets the base `opssignal` Python
-//! package read `SIGNAL_CONFIG=az://...` from Azure Blob Storage. The base
-//! package looks for this module when it builds its client and sends
-//! every az:// fetch to [`fetch`]; all the logic is in
+//! package read configs from Azure (az://, azappconfig://, cosmos://) and
+//! Key Vault placeholders (`${azure-kv:...}`). The base package
+//! looks for this module when it builds its client and sends every
+//! fetch for those schemes to [`fetch`]; all the logic is in
 //! `opssignal-core`, compiled here with its `azure` feature.
 
 use pyo3::exceptions::PyRuntimeError;
@@ -16,7 +17,7 @@ fn fetch(py: Python<'_>, url: String) -> PyResult<String> {
 
 #[pymodule]
 fn _azure(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("SCHEME", "az")?;
+    m.add("CLOUD", "azure")?;
     m.add_function(wrap_pyfunction!(fetch, m)?)?;
     Ok(())
 }

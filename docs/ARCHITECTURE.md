@@ -153,9 +153,16 @@ mode is worse than not having the SDK at all. This is enforced in
 
 ## Config sources and reload
 
-`SIGNAL_CONFIG` can name a local file or an `https://`, `s3://`, `gs://` or
-`az://` object (`crates/core/src/source.rs`). The cloud stores sit behind the
-`s3`, `gcs` and `azure` cargo features of `opssignal-core`, so the core stays
+`SIGNAL_CONFIG` can name a local file, an `https://`, `s3://`, `gs://` or
+`az://` object, an AWS AppConfig profile (`appconfig://`), an Azure App
+Configuration key (`azappconfig://`), or one item of DynamoDB (`dynamodb://`),
+Firestore (`firestore://`) or Cosmos DB (`cosmos://`)
+(`crates/core/src/source.rs`). The cloud
+code lives in `crates/core/src/cloud/`, one module per cloud, and non-storage
+services are signed with the credentials object_store already resolves (SigV4
+on AWS; Entra tokens for the service's own audience on Azure), so no cloud SDK
+is in the tree. The cloud stores sit behind the
+`aws`, `gcp` and `azure` cargo features of `opssignal-core`, so the core stays
 light. They run on the same reqwest/rustls stack as the providers rather than
 pulling in a second one.
 
@@ -166,7 +173,8 @@ each cloud ships as its own wheel (`crates/python-aws`, `-gcp`, `-azure`),
 installed through the `opssignal[aws]`, `[gcp]` and `[azure]` extras, because
 pip extras can add packages but cannot change what is compiled into one. At
 startup the base binding imports whichever add-ons are installed and registers
-each one's `fetch` with the core (`source::register_fetcher`). The core calls
+each one's `fetch` with the core for every scheme of its cloud
+(`source::register_cloud_fetcher`). The core calls
 it on a plain thread for that scheme, with the same cache and fallback rules.
 An add-on is a thin wrapper around `source::fetch_blocking`; it has no logic of
 its own.
@@ -177,8 +185,13 @@ Two reliability rules shape this code:
   is unreachable or serves a broken file falls back to the last good cached
   copy, then to the zero-config default (console only). The cache holds the
   raw text before `${VAR}` substitution, so it never contains secrets.
+  `${aws-sm:...}`, `${gcp-sm:...}` and `${azure-kv:...}` placeholders are
+  resolved by `secrets.rs` after each file is fetched (values cached in memory
+  for `SIGNAL_SECRETS_TTL_SECS`); a store that can't be reached is handled
+  like an unreachable source.
 - **A reload is all or nothing.** `reload.rs` polls the source on an interval
-  (default 60 s) and, when the text changes and loads cleanly, swaps routes and
+  (default 60 s) and, when the text or a fingerprint of its resolved secrets
+  changes and loads cleanly, swaps routes and
   providers together as one `Pipeline` behind an `RwLock<Arc<_>>`. In-flight
   deliveries keep the `Arc` they started with. A failed reload keeps the
   current pipeline. The sink is never reopened live.

@@ -1,8 +1,9 @@
 //! The `opssignal-aws` add-on: lets the base `opssignal` Python
-//! package read `SIGNAL_CONFIG=s3://...` from AWS S3. The base
-//! package looks for this module when it builds its client and sends
-//! every s3:// fetch to [`fetch`]; all the logic is in
-//! `opssignal-core`, compiled here with its `s3` feature.
+//! package read configs from AWS (s3://, appconfig://, dynamodb://) and
+//! Secrets Manager placeholders (`${aws-sm:...}`). The base package
+//! looks for this module when it builds its client and sends every
+//! fetch for those schemes to [`fetch`]; all the logic is in
+//! `opssignal-core`, compiled here with its `aws` feature.
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -16,7 +17,7 @@ fn fetch(py: Python<'_>, url: String) -> PyResult<String> {
 
 #[pymodule]
 fn _aws(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("SCHEME", "s3")?;
+    m.add("CLOUD", "aws")?;
     m.add_function(wrap_pyfunction!(fetch, m)?)?;
     Ok(())
 }

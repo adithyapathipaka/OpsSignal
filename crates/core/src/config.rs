@@ -18,6 +18,7 @@ use crate::routing::{Route, RoutingConfig};
 use crate::signal::SignalError;
 use crate::source::{self, ConfigSource, LoadOptions};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 pub const CONFIG_ENV_VAR: &str = "SIGNAL_CONFIG";
@@ -69,16 +70,67 @@ impl Layer {
     /// Parses one file, interpolating `${VAR}` placeholders. Routes are
     /// checked only once the whole chain is merged, since a team file
     /// may route to a provider its parent configures.
+    ///
+    /// A `${store:...}` secret placeholder is an error here, since it
+    /// needs a network read; configs loaded through a client resolve
+    /// them first (see [`crate::secrets`]).
     pub fn from_yaml_str(text: &str) -> Result<Self, SignalError> {
-        let mut value: serde_yaml::Value =
-            serde_yaml::from_str(text).map_err(|e| config_err(format!("invalid YAML: {e}")))?;
-        // An empty file parses as null; treat it as "all defaults".
-        if value.is_null() {
-            value = serde_yaml::Value::Mapping(Default::default());
-        }
-        interpolate_env(&mut value)?;
+        Self::from_yaml_str_with(text, &HashMap::new())
+    }
+
+    /// Like [`Layer::from_yaml_str`], taking secret placeholders from
+    /// `secrets` (keyed by placeholder name, such as `aws-sm:prod/x`).
+    pub(crate) fn from_yaml_str_with(
+        text: &str,
+        secrets: &HashMap<String, String>,
+    ) -> Result<Self, SignalError> {
+        let mut value = parse_value(text)?;
+        interpolate(&mut value, secrets)?;
         serde_yaml::from_value(value).map_err(|e| config_err(e.to_string()))
     }
+
+    /// The names of the secret placeholders in `text`, each once, in
+    /// order. Placeholders in YAML comments are not included.
+    pub(crate) fn secret_refs(text: &str) -> Result<Vec<String>, SignalError> {
+        fn walk(value: &serde_yaml::Value, out: &mut Vec<String>) -> Result<(), SignalError> {
+            match value {
+                serde_yaml::Value::String(s) => {
+                    for name in placeholders(s)? {
+                        if crate::secrets::is_ref(name) && !out.iter().any(|n| n == name) {
+                            out.push(name.to_string());
+                        }
+                    }
+                }
+                serde_yaml::Value::Sequence(items) => {
+                    for item in items {
+                        walk(item, out)?;
+                    }
+                }
+                serde_yaml::Value::Mapping(map) => {
+                    for (_, v) in map {
+                        walk(v, out)?;
+                    }
+                }
+                serde_yaml::Value::Tagged(tagged) => walk(&tagged.value, out)?,
+                _ => {}
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(&parse_value(text)?, &mut out)?;
+        Ok(out)
+    }
+}
+
+fn parse_value(text: &str) -> Result<serde_yaml::Value, SignalError> {
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(text).map_err(|e| config_err(format!("invalid YAML: {e}")))?;
+    // An empty file parses as null; treat it as "all defaults".
+    Ok(if value.is_null() {
+        serde_yaml::Value::Mapping(Default::default())
+    } else {
+        value
+    })
 }
 
 /// Typed per provider, with unknown keys rejected, so a typo like
@@ -262,32 +314,35 @@ fn config_err(msg: impl Into<String>) -> SignalError {
     SignalError::Config(msg.into())
 }
 
-fn interpolate_env(value: &mut serde_yaml::Value) -> Result<(), SignalError> {
+fn interpolate(
+    value: &mut serde_yaml::Value,
+    secrets: &HashMap<String, String>,
+) -> Result<(), SignalError> {
     match value {
         serde_yaml::Value::String(s) => {
-            *s = interpolate_str(s)?;
+            *s = interpolate_str(s, secrets)?;
         }
         serde_yaml::Value::Sequence(items) => {
             for item in items {
-                interpolate_env(item)?;
+                interpolate(item, secrets)?;
             }
         }
         serde_yaml::Value::Mapping(map) => {
             for (_, v) in map.iter_mut() {
-                interpolate_env(v)?;
+                interpolate(v, secrets)?;
             }
         }
-        serde_yaml::Value::Tagged(tagged) => interpolate_env(&mut tagged.value)?,
+        serde_yaml::Value::Tagged(tagged) => interpolate(&mut tagged.value, secrets)?,
         _ => {}
     }
     Ok(())
 }
 
-fn interpolate_str(input: &str) -> Result<String, SignalError> {
-    let mut out = String::with_capacity(input.len());
+/// The `${...}` names in `input`, in order.
+fn placeholders(input: &str) -> Result<Vec<&str>, SignalError> {
+    let mut names = Vec::new();
     let mut rest = input;
     while let Some(start) = rest.find("${") {
-        out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let end = after
             .find('}')
@@ -296,13 +351,34 @@ fn interpolate_str(input: &str) -> Result<String, SignalError> {
         if name.is_empty() {
             return Err(config_err(format!("empty ${{}} placeholder in '{input}'")));
         }
-        let val = std::env::var(name).map_err(|_| {
-            config_err(format!(
-                "environment variable {name} is referenced in signal.yaml but not set"
-            ))
-        })?;
-        out.push_str(&val);
+        names.push(name);
         rest = &after[end + 1..];
+    }
+    Ok(names)
+}
+
+fn interpolate_str(input: &str, secrets: &HashMap<String, String>) -> Result<String, SignalError> {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    for name in placeholders(input)? {
+        let placeholder = format!("${{{name}}}");
+        let start = rest.find(&placeholder).expect("found by placeholders");
+        out.push_str(&rest[..start]);
+        let val = if crate::secrets::is_ref(name) {
+            secrets.get(name).cloned().ok_or_else(|| {
+                config_err(format!(
+                    "secret ${{{name}}} can only be read when the config is loaded by a client"
+                ))
+            })?
+        } else {
+            std::env::var(name).map_err(|_| {
+                config_err(format!(
+                    "environment variable {name} is referenced in signal.yaml but not set"
+                ))
+            })?
+        };
+        out.push_str(&val);
+        rest = &rest[start + placeholder.len()..];
     }
     out.push_str(rest);
     Ok(out)
@@ -348,8 +424,11 @@ mod tests {
     fn interpolates_multiple_placeholders_in_one_value() {
         std::env::set_var("OPSSIGNAL_TEST_HOST", "example.test");
         std::env::set_var("OPSSIGNAL_TEST_PORT", "8443");
-        let out = interpolate_str("https://${OPSSIGNAL_TEST_HOST}:${OPSSIGNAL_TEST_PORT}/x")
-            .expect("interpolates");
+        let out = interpolate_str(
+            "https://${OPSSIGNAL_TEST_HOST}:${OPSSIGNAL_TEST_PORT}/x",
+            &HashMap::new(),
+        )
+        .expect("interpolates");
         assert_eq!(out, "https://example.test:8443/x");
     }
 
@@ -376,7 +455,7 @@ mod tests {
 
     #[test]
     fn unterminated_placeholder_is_rejected() {
-        assert!(interpolate_str("${NOPE").is_err());
+        assert!(interpolate_str("${NOPE", &HashMap::new()).is_err());
     }
 
     #[test]
@@ -404,14 +483,38 @@ mod tests {
     }
 
     #[test]
+    fn secret_placeholders_are_collected_from_values_only() {
+        let yaml = "# old: ${aws-sm:retired}\nproviders:\n  slack:\n    webhook_url: \"${aws-sm:prod/slack#url}\"\n  webhook:\n    url: \"https://${OPSSIGNAL_TEST_HOST}/${gcp-sm:ops/path}?k=${aws-sm:prod/slack#url}\"\n";
+        assert_eq!(
+            Layer::secret_refs(yaml).expect("refs"),
+            ["aws-sm:prod/slack#url", "gcp-sm:ops/path"]
+        );
+    }
+
+    #[test]
+    fn secret_placeholders_take_resolved_values() {
+        std::env::set_var("OPSSIGNAL_TEST_SECRET_HOST", "hooks.example.test");
+        let yaml = "providers:\n  webhook:\n    url: \"https://${OPSSIGNAL_TEST_SECRET_HOST}/${azure-kv:v/path}\"\n";
+        let err = Layer::from_yaml_str(yaml).expect_err("unresolved secret");
+        assert!(err.to_string().contains("${azure-kv:v/path}"), "{err}");
+
+        let secrets = HashMap::from([("azure-kv:v/path".to_string(), "abc".to_string())]);
+        let layer = Layer::from_yaml_str_with(yaml, &secrets).expect("layer");
+        assert_eq!(
+            layer.providers.webhook.expect("webhook").url,
+            "https://hooks.example.test/abc"
+        );
+    }
+
+    #[test]
     fn empty_placeholder_is_rejected() {
-        assert!(interpolate_str("x${}y").is_err());
+        assert!(interpolate_str("x${}y", &HashMap::new()).is_err());
     }
 
     #[test]
     fn text_without_placeholders_is_unchanged() {
         assert_eq!(
-            interpolate_str("https://example.test/$5{x").expect("no placeholder"),
+            interpolate_str("https://example.test/$5{x", &HashMap::new()).expect("no placeholder"),
             "https://example.test/$5{x"
         );
     }

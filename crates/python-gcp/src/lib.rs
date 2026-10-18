@@ -1,8 +1,9 @@
 //! The `opssignal-gcp` add-on: lets the base `opssignal` Python
-//! package read `SIGNAL_CONFIG=gs://...` from Google Cloud Storage. The base
-//! package looks for this module when it builds its client and sends
-//! every gs:// fetch to [`fetch`]; all the logic is in
-//! `opssignal-core`, compiled here with its `gcs` feature.
+//! package read configs from Google Cloud (gs://, firestore://) and
+//! Secret Manager placeholders (`${gcp-sm:...}`). The base package
+//! looks for this module when it builds its client and sends every
+//! fetch for those schemes to [`fetch`]; all the logic is in
+//! `opssignal-core`, compiled here with its `gcp` feature.
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -16,7 +17,7 @@ fn fetch(py: Python<'_>, url: String) -> PyResult<String> {
 
 #[pymodule]
 fn _gcp(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("SCHEME", "gs")?;
+    m.add("CLOUD", "gcp")?;
     m.add_function(wrap_pyfunction!(fetch, m)?)?;
     Ok(())
 }

@@ -1,11 +1,14 @@
 #![forbid(unsafe_code)]
 
 mod chain;
+#[cfg(feature = "object-store")]
+mod cloud;
 pub mod config;
 pub mod delivery;
 pub mod providers;
 mod reload;
 pub mod routing;
+pub mod secrets;
 pub mod signal;
 pub mod sink;
 pub mod source;
