@@ -147,6 +147,10 @@ pub struct ProvidersConfig {
     pub slack: Option<SlackConfig>,
     #[serde(default)]
     pub webhook: Option<WebhookConfig>,
+    #[serde(default)]
+    pub pagerduty: Option<PagerDutyConfig>,
+    #[serde(default)]
+    pub teams: Option<TeamsConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -166,6 +170,24 @@ pub struct SlackConfig {
 #[serde(deny_unknown_fields)]
 pub struct WebhookConfig {
     pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PagerDutyConfig {
+    /// Integration key of an Events API v2 integration on a service.
+    pub routing_key: String,
+    /// Events API endpoint; defaults to the US one. EU accounts set
+    /// `https://events.eu.pagerduty.com/v2/enqueue`.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamsConfig {
+    /// Workflows (or legacy incoming) webhook URL of a Teams channel.
+    pub webhook_url: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -235,6 +257,8 @@ impl Config {
             config.providers.console = p.console.or(config.providers.console.take());
             config.providers.slack = p.slack.or(config.providers.slack.take());
             config.providers.webhook = p.webhook.or(config.providers.webhook.take());
+            config.providers.pagerduty = p.pagerduty.or(config.providers.pagerduty.take());
+            config.providers.teams = p.teams.or(config.providers.teams.take());
             if let Some(storage) = layer.storage {
                 config.storage = storage;
             }
@@ -283,6 +307,12 @@ impl Config {
         }
         if self.providers.webhook.is_some() {
             names.push("webhook");
+        }
+        if self.providers.pagerduty.is_some() {
+            names.push("pagerduty");
+        }
+        if self.providers.teams.is_some() {
+            names.push("teams");
         }
         names
     }
@@ -535,6 +565,71 @@ mod tests {
         let yaml = "providers:\n  webhook:\n    url: https://example.test\n";
         let config = Config::from_yaml_str(yaml).expect("config");
         assert_eq!(config.provider_names(), vec!["console", "webhook"]);
+    }
+
+    #[test]
+    fn pagerduty_and_teams_parse_and_can_be_routed_to() {
+        let yaml = "providers:\n  pagerduty:\n    routing_key: R0UT1NG\n  teams:\n    webhook_url: https://example.test/teams\nroutes:\n  - match:\n      severity: [critical]\n    providers: [pagerduty, teams]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let pd = config.providers.pagerduty.as_ref().expect("pagerduty");
+        assert_eq!(pd.routing_key, "R0UT1NG");
+        assert_eq!(pd.url, None);
+        assert_eq!(
+            config.providers.teams.as_ref().expect("teams").webhook_url,
+            "https://example.test/teams"
+        );
+        assert_eq!(
+            config.provider_names(),
+            vec!["console", "pagerduty", "teams"]
+        );
+    }
+
+    #[test]
+    fn pagerduty_accepts_an_eu_endpoint() {
+        let yaml = "providers:\n  pagerduty:\n    routing_key: k\n    url: https://events.eu.pagerduty.com/v2/enqueue\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        assert_eq!(
+            config
+                .providers
+                .pagerduty
+                .expect("pagerduty")
+                .url
+                .as_deref(),
+            Some("https://events.eu.pagerduty.com/v2/enqueue")
+        );
+    }
+
+    #[test]
+    fn pagerduty_without_a_routing_key_is_rejected() {
+        let yaml = "providers:\n  pagerduty:\n    url: https://example.test\n";
+        let err = Config::from_yaml_str(yaml).expect_err("routing_key is required");
+        assert!(err.to_string().contains("routing_key"), "{err}");
+    }
+
+    #[test]
+    fn unknown_teams_field_is_rejected() {
+        let yaml = "providers:\n  teams:\n    url: https://example.test\n";
+        let err = Config::from_yaml_str(yaml).expect_err("teams takes webhook_url");
+        assert!(err.to_string().contains("url"), "{err}");
+    }
+
+    #[test]
+    fn later_layer_replaces_pagerduty_and_teams() {
+        let base = Layer::from_yaml_str(
+            "providers:\n  pagerduty:\n    routing_key: org\n  teams:\n    webhook_url: https://example.test/org\n",
+        )
+        .expect("base");
+        let team = Layer::from_yaml_str("providers:\n  pagerduty:\n    routing_key: payments\n")
+            .expect("team");
+        let config = Config::from_layers([(None, base), (None, team)]).expect("merged");
+        assert_eq!(
+            config.providers.pagerduty.expect("pagerduty").routing_key,
+            "payments"
+        );
+        assert_eq!(
+            config.providers.teams.expect("teams").webhook_url,
+            "https://example.test/org"
+        );
     }
 
     #[test]

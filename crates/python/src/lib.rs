@@ -11,6 +11,7 @@ use opssignal_core::SignalClient;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 /// Process-global client, built from signal.yaml on the first notify()
 /// call. A config error is cached too, so every later call raises the
@@ -101,8 +102,27 @@ fn notify(
     Ok(())
 }
 
+/// flush(timeout=5.0) -> bool
+///
+/// Waits up to `timeout` seconds for signals sent with notify() to
+/// finish delivering. Returns False if some were still in flight; they
+/// stay recorded as pending. Registered with atexit on import, so a
+/// script that ends right after notify() still delivers.
+#[pyfunction]
+#[pyo3(signature = (timeout=5.0))]
+fn flush(py: Python<'_>, timeout: f64) -> PyResult<bool> {
+    let timeout = Duration::try_from_secs_f64(timeout)
+        .map_err(|e| PyValueError::new_err(format!("invalid timeout: {e}")))?;
+    let Some(Ok(client)) = CLIENT.get() else {
+        return Ok(true);
+    };
+    // Detached: delivery tasks may need the GIL (a cloud add-on).
+    Ok(py.detach(|| client.flush(timeout)))
+}
+
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(notify, m)?)?;
+    m.add_function(wrap_pyfunction!(flush, m)?)?;
     Ok(())
 }

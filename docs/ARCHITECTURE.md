@@ -26,7 +26,7 @@ flowchart TB
         CLIENT["SignalClient<br/>owns a Tokio runtime"]
         VAL["signal<br/>validate, id, timestamp, dedup key"]
         ROUTE["routing<br/>resolve(), console fallback"]
-        PROV["providers<br/>console, slack, webhook"]
+        PROV["providers<br/>console, slack, webhook,<br/>pagerduty, teams"]
         SINK["sink<br/>SqliteSink"]
     end
 
@@ -42,7 +42,7 @@ flowchart TB
     CLIENT --> ROUTE
     ROUTE --> PROV
     CLIENT --> SINK
-    PROV --> EXT["Slack / HTTP endpoints / stdout"]
+    PROV --> EXT["Slack / Teams / PagerDuty / HTTP endpoints / stdout"]
     SINK --> DB[("signals.db")]
 ```
 
@@ -62,18 +62,29 @@ sequenceDiagram
 
     App->>Client: notify_async(input)
     Client->>Client: validate, assign id + timestamp + dedup key
-    Client-->>App: returns immediately
+    Client->>Sink: record(signal), status pending
+    Client-->>App: returns
     Client->>Router: resolve(signal)
     Router-->>Client: provider names (never empty, console fallback)
     loop each provider until one succeeds
         Client->>Provider: send(signal), up to 3 attempts with backoff
         Provider-->>Client: Ok / Err
     end
-    Client->>Sink: write(signal, delivery result)
+    Client->>Sink: complete(signal, delivery result)
 ```
 
 `notify_sync` runs the same steps but blocks the caller until the result is
 known or the timeout expires.
+
+`notify_async` callers wait only for the local sink write, never for a
+provider. Its deliveries run on the client's runtime, so a process that exits
+would cut them off. `SignalClient::flush(timeout)` waits for them, and every
+binding calls it on the way out: dropping a Rust `SignalClient` flushes for up
+to 5 seconds, the Python package registers `flush()` with `atexit`, and C
+hosts call `signal_flush(timeout_ms)` before exiting (the library holds a
+process-global client that is never dropped). The CLI uses `notify_sync`, so
+it has nothing in flight. A signal still undelivered when the wait runs out
+stays in the sink as `pending`.
 
 ## Signal model
 
@@ -101,7 +112,7 @@ correctly.
 ## Delivery semantics: sync vs async
 
 Both `notify_sync` and `notify_async` share one internal pipeline
-(validate → route → deliver → record). The only difference is whether the
+(validate → record → route → deliver → complete). The only difference is whether the
 calling thread blocks on the delivery future.
 
 **Default for the Airflow adapter is async (fire-and-forget).** A blocking
@@ -111,21 +122,24 @@ who want a delivery guarantee can call `notify_sync` directly with an
 explicit timeout.
 
 The design rule is that persistence to the sink happens **before** delivery
-is attempted, regardless of sync/async, so a failed delivery is still durably
-recorded with `delivery_status: failed`. This is what makes delivery
-analytics and MTTR reporting possible later without re-architecting.
+is attempted, regardless of sync/async: the signal is stored as `pending`,
+then updated to `delivered` or `failed`. A failed delivery is durably
+recorded, and a signal whose process died mid-delivery is still visible as
+`pending` rather than lost. This is what makes delivery analytics and MTTR
+reporting possible later without re-architecting.
 
-> **Not yet implemented.** Today `SignalClient` delivers first and writes the
-> sink afterwards, in one step with the delivery result (see the sequence
-> above). Failed deliveries are recorded, but a signal still in flight when
-> the process exits is lost. Moving the write ahead of delivery is an open
-> item.
+A sink error never stops delivery. If `record` fails it is logged and the
+signal is delivered anyway; `complete` writes the whole row, so the outcome
+still lands if the sink has recovered.
 
 ## The storage boundary
 
 ```rust
 pub trait SignalSink: Send + Sync {
-    fn write(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
+    /// Before delivery: store the signal as pending.
+    fn record(&self, signal: &Signal) -> Result<(), SignalError>;
+    /// After delivery: store the outcome (an upsert; must work without `record`).
+    fn complete(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
 }
 ```
 

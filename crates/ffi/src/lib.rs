@@ -14,6 +14,7 @@ use opssignal_core::SignalClient;
 use std::ffi::{c_char, CStr, CString};
 use std::panic;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 /// Process-global client, built from signal.yaml on first use. A config
 /// error is cached and returned on every call.
@@ -90,6 +91,21 @@ pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult
 
         client()?.notify_async(input);
         Ok(())
+    })
+}
+
+/// Waits up to `timeout_ms` for signals sent with `signal_notify_async`
+/// to finish delivering. Fails if some were still in flight; those stay
+/// recorded as pending. The library has no exit hook of its own (the
+/// process-global client is never dropped), so hosts should call this
+/// before exiting.
+#[no_mangle]
+pub extern "C" fn signal_flush(timeout_ms: u64) -> CResult {
+    guarded(|| match CLIENT.get() {
+        Some(Ok(client)) if !client.flush(Duration::from_millis(timeout_ms)) => {
+            Err("timed out with signals still being delivered".to_string())
+        }
+        _ => Ok(()),
     })
 }
 
@@ -218,5 +234,6 @@ mod tests {
 
         assert!(result.success);
         assert!(result.error.is_null());
+        assert!(signal_flush(5_000).success);
     }
 }
