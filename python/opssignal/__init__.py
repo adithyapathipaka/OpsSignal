@@ -4,11 +4,19 @@ Public API surface for v0.1:
     from opssignal import notify
     notify(source="airflow", event_type="task_failed", title="...", severity="warning")
 
+notify() returns before delivery finishes. Signals still in flight when
+the interpreter exits are flushed by an atexit hook (up to 5 seconds);
+call flush() yourself to wait at a point of your choosing.
+
 The Airflow adapter is the flagship integration for v0.1 — see
 opssignal.integrations.airflow.
 """
 
-from opssignal._native import notify
+import atexit
 
-__all__ = ["notify"]
+from opssignal._native import flush, notify
+
+atexit.register(flush)
+
+__all__ = ["flush", "notify"]
 __version__ = "0.1.0"
