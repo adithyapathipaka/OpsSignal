@@ -1,0 +1,53 @@
+site_name: OpsSignal
+site_description: Rust-powered SDK for routing operational events to Slack, webhooks, and more
+site_url: https://adithyapathipaka.github.io/OpsSignal/
+repo_url: https://github.com/adithyapathipaka/OpsSignal
+repo_name: adithyapathipaka/OpsSignal
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Configuration: configuration.md
+  - CLI: cli.md
+  - Architecture: ARCHITECTURE.md
+  - API reference: reference.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+validation:
+  links:
+    not_found: warn
+    anchors: warn

@@ -4,6 +4,75 @@ This document records the design decisions for opssignal and the trade-offs
 behind them. If you're implementing a new provider, sink, or binding, read
 this first.
 
+## Components
+
+```mermaid
+flowchart TB
+    subgraph callers[Callers]
+        PY["Python: opssignal.notify()<br/>Airflow failure_callback"]
+        CLI["CLI: opssignal notify"]
+        HOST["Future Java / Go hosts"]
+    end
+
+    subgraph bindings[Thin binding layers]
+        PYO3["crates/python<br/>PyO3 extension"]
+        CLIC["crates/cli<br/>clap binary"]
+        FFI["crates/ffi<br/>C ABI, catch_unwind on every entry point"]
+    end
+
+    subgraph core["crates/core (all business logic)"]
+        CFG["config<br/>signal.yaml + ${VAR} interpolation"]
+        CLIENT["SignalClient<br/>owns a Tokio runtime"]
+        VAL["signal<br/>validate, id, timestamp, dedup key"]
+        ROUTE["routing<br/>resolve(), console fallback"]
+        PROV["providers<br/>console, slack, webhook"]
+        SINK["sink<br/>SqliteSink"]
+    end
+
+    PY --> PYO3
+    CLI --> CLIC
+    HOST -.-> FFI
+    PYO3 --> CLIENT
+    CLIC --> CLIENT
+    FFI --> CLIENT
+    CFG --> CLIENT
+    CLIENT --> VAL
+    CLIENT --> ROUTE
+    ROUTE --> PROV
+    CLIENT --> SINK
+    PROV --> EXT["Slack / HTTP endpoints / stdout"]
+    SINK --> DB[("signals.db")]
+```
+
+The Python and FFI bindings each hold one process-global `SignalClient`,
+built lazily from `signal.yaml` on the first call. The CLI builds one per
+invocation.
+
+### Lifecycle of one signal
+
+```mermaid
+sequenceDiagram
+    participant App as Caller
+    participant Client as SignalClient
+    participant Router as RoutingConfig
+    participant Provider
+    participant Sink as SqliteSink
+
+    App->>Client: notify_async(input)
+    Client->>Client: validate, assign id + timestamp + dedup key
+    Client-->>App: returns immediately
+    Client->>Router: resolve(signal)
+    Router-->>Client: provider names (never empty, console fallback)
+    loop each provider until one succeeds
+        Client->>Provider: send(signal), up to 3 attempts with backoff
+        Provider-->>Client: Ok / Err
+    end
+    Client->>Sink: write(signal, delivery result)
+```
+
+`notify_sync` runs the same steps but blocks the caller until the result is
+known or the timeout expires.
+
 ## Signal model
 
 ```rust
@@ -30,7 +99,7 @@ correctly.
 ## Delivery semantics: sync vs async
 
 Both `notify_sync` and `notify_async` share one internal pipeline
-(validate → persist → route → deliver). The only difference is whether the
+(validate → route → deliver → record). The only difference is whether the
 calling thread blocks on the delivery future.
 
 **Default for the Airflow adapter is async (fire-and-forget).** A blocking
@@ -39,10 +108,16 @@ latency and a new failure mode to the very DAG run being monitored. Callers
 who want a delivery guarantee can call `notify_sync` directly with an
 explicit timeout.
 
-Persistence to the sink always happens **before** delivery is attempted,
-regardless of sync/async, so a failed delivery is still durably recorded
-with `delivery_status: failed`. This is what makes delivery analytics and
-MTTR reporting possible later without re-architecting.
+The design rule is that persistence to the sink happens **before** delivery
+is attempted, regardless of sync/async, so a failed delivery is still durably
+recorded with `delivery_status: failed`. This is what makes delivery
+analytics and MTTR reporting possible later without re-architecting.
+
+> **Not yet implemented.** Today `SignalClient` delivers first and writes the
+> sink afterwards, in one step with the delivery result (see the sequence
+> above). Failed deliveries are recorded, but a signal still in flight when
+> the process exits is lost. Moving the write ahead of delivery is an open
+> item.
 
 ## The storage boundary
 
@@ -90,7 +165,7 @@ into real Python exceptions via PyO3 — never a silently swallowed `None`.
 `crates/ffi` is a generic C ABI layer intended for future Java/Go bindings
 via JNI/cgo. `crates/python` uses PyO3 macros directly, which is a different
 (and for Python, more idiomatic and lower-overhead) binding mechanism than
-hand-rolled C ABI. Both wrap the same `signal-core` logic; neither contains
+hand-rolled C ABI. Both wrap the same `opssignal-core` logic; neither contains
 business logic of its own.
 
 ## What's deliberately out of scope (v0.1)
