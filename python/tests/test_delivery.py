@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from opssignal import flush, notify
 
 
@@ -143,7 +142,7 @@ def test_flush_rejects_a_negative_timeout():
 
 
 class _SlowHook(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):  # noqa: N802 - http.server's naming
+    def do_POST(self):
         self.rfile.read(int(self.headers["Content-Length"]))
         time.sleep(0.5)
         self.send_response(200)
