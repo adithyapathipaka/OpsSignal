@@ -52,14 +52,20 @@ impl RoutingConfig {
     /// architecture review: "unmatched signals always hit console at
     /// minimum."
     pub fn resolve(&self, signal: &Signal) -> Vec<String> {
-        let mut matched: Vec<String> = self
+        // A provider named by several matching routes is tried once, at
+        // its first position, so a failing provider is not retried again
+        // later in the same delivery.
+        let mut matched: Vec<String> = Vec::new();
+        for name in self
             .routes
             .iter()
             .filter(|r| r.match_rule.matches(signal))
-            .flat_map(|r| r.providers.clone())
-            .collect();
-
-        matched.dedup();
+            .flat_map(|r| r.providers.iter())
+        {
+            if !matched.contains(name) {
+                matched.push(name.clone());
+            }
+        }
 
         if matched.is_empty() {
             vec!["console".to_string()]
@@ -115,5 +121,105 @@ mod tests {
         };
         let signal = sample_signal(Severity::Error, "prod");
         assert_eq!(config.resolve(&signal), vec!["slack".to_string()]);
+    }
+
+    fn route(
+        severity: &[Severity],
+        environment: Option<&str>,
+        source: Option<&str>,
+        providers: &[&str],
+    ) -> Route {
+        Route {
+            match_rule: RouteMatch {
+                severity: severity.to_vec(),
+                environment: environment.map(str::to_string),
+                source: source.map(str::to_string),
+            },
+            providers: providers.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn empty_routing_config_falls_back_to_console() {
+        let config = RoutingConfig { routes: vec![] };
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Critical, "prod")),
+            vec!["console".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_match_matches_every_signal() {
+        let config = RoutingConfig {
+            routes: vec![route(&[], None, None, &["webhook"])],
+        };
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Info, "dev")),
+            vec!["webhook".to_string()]
+        );
+    }
+
+    #[test]
+    fn every_field_in_a_match_must_hold() {
+        let config = RoutingConfig {
+            routes: vec![route(
+                &[Severity::Error],
+                Some("prod"),
+                Some("airflow"),
+                &["slack"],
+            )],
+        };
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Error, "prod")),
+            vec!["slack".to_string()]
+        );
+        // Right severity and source, wrong environment.
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Error, "staging")),
+            vec!["console".to_string()]
+        );
+        // Right severity and environment, wrong source.
+        let mut other_source = sample_signal(Severity::Error, "prod");
+        other_source.source = "jenkins".into();
+        assert_eq!(config.resolve(&other_source), vec!["console".to_string()]);
+    }
+
+    #[test]
+    fn environment_rule_does_not_match_signal_without_environment() {
+        let config = RoutingConfig {
+            routes: vec![route(&[], Some("prod"), None, &["slack"])],
+        };
+        let mut signal = sample_signal(Severity::Error, "prod");
+        signal.environment = None;
+        assert_eq!(config.resolve(&signal), vec!["console".to_string()]);
+    }
+
+    #[test]
+    fn all_matching_routes_contribute_providers_in_config_order() {
+        let config = RoutingConfig {
+            routes: vec![
+                route(&[Severity::Error], None, None, &["slack"]),
+                route(&[Severity::Warning], None, None, &["console"]),
+                route(&[], Some("prod"), None, &["webhook"]),
+            ],
+        };
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Error, "prod")),
+            vec!["slack".to_string(), "webhook".to_string()]
+        );
+    }
+
+    #[test]
+    fn provider_named_by_several_routes_is_listed_once_at_its_first_position() {
+        let config = RoutingConfig {
+            routes: vec![
+                route(&[Severity::Error], None, None, &["slack", "webhook"]),
+                route(&[], Some("prod"), None, &["webhook", "slack"]),
+            ],
+        };
+        assert_eq!(
+            config.resolve(&sample_signal(Severity::Error, "prod")),
+            vec!["slack".to_string(), "webhook".to_string()]
+        );
     }
 }

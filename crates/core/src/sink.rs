@@ -83,3 +83,113 @@ impl SignalSink for SqliteSink {
 // NOTE for v0.3 roadmap: PostgresSink and S3Sink implement the same
 // trait. Routing/retry logic never needs to change when a new sink is
 // added — that boundary is the whole point.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::delivery::DeliveryStatus;
+    use crate::signal::{Severity, SignalInput};
+
+    fn temp_db() -> String {
+        std::env::temp_dir()
+            .join(format!("opssignal-sink-{}.db", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn signal() -> Signal {
+        Signal::from_input(SignalInput {
+            source: "airflow".into(),
+            event_type: "task_failed".into(),
+            title: "dbt model failed".into(),
+            severity: Severity::Error,
+            environment: Some("prod".into()),
+            metadata: Some(serde_json::json!({"dag": "nightly"})),
+            ..Default::default()
+        })
+    }
+
+    fn failed() -> DeliveryResult {
+        DeliveryResult {
+            status: DeliveryStatus::Failed,
+            provider: None,
+            error: Some("slack webhook returned status 500".into()),
+            attempts: 3,
+        }
+    }
+
+    #[test]
+    fn write_stores_every_column() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        let signal = signal();
+        sink.write(&signal, &failed()).expect("write");
+
+        let conn = Connection::open(&db).expect("reopen");
+        let row: Vec<Option<String>> = conn
+            .query_row(
+                "SELECT id, source, event_type, severity, title, environment, dedup_key, \
+                 delivery_status, provider, error, payload_json, timestamp FROM signals",
+                [],
+                |r| (0..12).map(|i| r.get(i)).collect(),
+            )
+            .expect("one row");
+        let col = |i: usize| row[i].as_deref();
+
+        assert_eq!(col(0), Some(signal.id.to_string().as_str()));
+        assert_eq!(col(1), Some("airflow"));
+        assert_eq!(col(2), Some("task_failed"));
+        assert_eq!(col(3), Some("error"));
+        assert_eq!(col(4), Some("dbt model failed"));
+        assert_eq!(col(5), Some("prod"));
+        assert_eq!(col(6), signal.dedup_key.as_deref());
+        assert_eq!(col(7), Some("failed"));
+        assert_eq!(col(8), None);
+        assert_eq!(col(9), Some("slack webhook returned status 500"));
+        let payload: serde_json::Value =
+            serde_json::from_str(col(10).expect("payload")).expect("payload is JSON");
+        assert_eq!(payload["metadata"]["dag"], "nightly");
+        assert_eq!(col(11), Some(signal.timestamp.to_rfc3339().as_str()));
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn reopening_an_existing_database_keeps_its_rows() {
+        let db = temp_db();
+        SqliteSink::open(&db)
+            .expect("open")
+            .write(&signal(), &failed())
+            .expect("write");
+        let sink = SqliteSink::open(&db).expect("reopen is idempotent");
+        sink.write(&signal(), &failed()).expect("second write");
+
+        let count: i64 = Connection::open(&db)
+            .expect("reopen")
+            .query_row("SELECT COUNT(*) FROM signals", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(count, 2);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn writing_the_same_signal_twice_is_a_sink_error() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        let signal = signal();
+        sink.write(&signal, &failed()).expect("first write");
+
+        let err = sink
+            .write(&signal, &failed())
+            .expect_err("duplicate id violates the primary key");
+        assert!(matches!(err, SignalError::Sink(_)));
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn unopenable_path_is_a_sink_error() {
+        let err = SqliteSink::open("/nonexistent-opssignal-dir/sub/signals.db")
+            .err()
+            .expect("missing parent directory must fail");
+        assert!(matches!(err, SignalError::Sink(_)));
+    }
+}

@@ -5,6 +5,11 @@ targets = []
 version = 2
 # Deny crates with known security vulnerabilities.
 yanked = "deny"
+ignore = [
+    # unsafe-libyaml (via serde_yaml) is archived, not vulnerable; no
+    # maintained upgrade exists. Remove once serde_yaml is replaced.
+    { id = "RUSTSEC-2024-0449", reason = "unmaintained only; serde_yaml replacement tracked separately" },
+]
 
 [licenses]
 version = 2

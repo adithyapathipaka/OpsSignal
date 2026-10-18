@@ -71,11 +71,15 @@ where
 }
 
 /// # Safety
-/// `json_ptr` must be a valid, null-terminated UTF-8 C string owned by
-/// the caller for the duration of this call.
+/// `json_ptr` must be null or a valid, null-terminated UTF-8 C string
+/// owned by the caller for the duration of this call. A null pointer is
+/// reported as an error rather than dereferenced.
 #[no_mangle]
 pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult {
     guarded(|| {
+        if json_ptr.is_null() {
+            return Err("signal payload pointer is null".to_string());
+        }
         let json_str = unsafe { CStr::from_ptr(json_ptr) }
             .to_str()
             .map_err(|e| format!("invalid UTF-8 in signal payload: {e}"))?;
@@ -121,6 +125,97 @@ mod tests {
     #[test]
     fn guarded_passes_through_ok() {
         let result = guarded(|| Ok(()));
+        assert!(result.success);
+        assert!(result.error.is_null());
+    }
+
+    /// Reads and frees the error string, as a language binding would.
+    fn take_error(result: CResult) -> String {
+        assert!(!result.success);
+        assert!(!result.error.is_null());
+        let msg = unsafe { CStr::from_ptr(result.error) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { signal_free_string(result.error) };
+        msg
+    }
+
+    fn notify(bytes: &[u8]) -> CResult {
+        let c = CString::new(bytes).expect("test payload has no interior null");
+        unsafe { signal_notify_async(c.as_ptr()) }
+    }
+
+    #[test]
+    fn guarded_panic_message_says_signal_not_sent() {
+        let result = guarded(|| -> Result<(), String> { panic!("boom") });
+        assert!(take_error(result).contains("signal not sent"));
+    }
+
+    #[test]
+    fn guarded_error_is_returned_verbatim() {
+        let result = guarded(|| Err("nope".to_string()));
+        assert_eq!(take_error(result), "nope");
+    }
+
+    #[test]
+    fn error_with_interior_null_byte_still_returns_a_message() {
+        let msg = take_error(CResult::error("bad\0message"));
+        assert_eq!(msg, "error message contained null byte");
+    }
+
+    #[test]
+    fn null_payload_is_an_error_not_a_crash() {
+        let result = unsafe { signal_notify_async(std::ptr::null()) };
+        assert!(take_error(result).contains("null"));
+    }
+
+    #[test]
+    fn invalid_utf8_payload_is_an_error() {
+        assert!(take_error(notify(&[0xff, 0xfe, b'{'])).contains("invalid UTF-8"));
+    }
+
+    #[test]
+    fn invalid_json_payload_is_an_error() {
+        assert!(take_error(notify(b"{not json")).contains("invalid signal JSON"));
+    }
+
+    #[test]
+    fn unknown_severity_in_json_is_an_error() {
+        let payload = br#"{"source":"ci","event_type":"e","title":"t","severity":"bogus"}"#;
+        assert!(take_error(notify(payload)).contains("invalid signal JSON"));
+    }
+
+    #[test]
+    fn blank_required_field_is_a_validation_error() {
+        let payload = br#"{"source":"ci","event_type":"e","title":" ","severity":"info"}"#;
+        assert!(take_error(notify(payload)).contains("title must not be empty"));
+    }
+
+    #[test]
+    fn freeing_a_null_string_is_a_no_op() {
+        unsafe { signal_free_string(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn valid_payload_is_accepted_by_the_configured_client() {
+        // The only test that reaches client(), so it alone decides which
+        // config the process-global client is built from.
+        let dir = std::env::temp_dir().join(format!("opssignal-ffi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let config = dir.join("signal.yaml");
+        std::fs::write(
+            &config,
+            format!(
+                "storage:\n  path: \"{}\"\n",
+                dir.join("signals.db").display()
+            ),
+        )
+        .expect("write config");
+        std::env::set_var("SIGNAL_CONFIG", &config);
+
+        let payload = br#"{"source":"ci","event_type":"build","title":"ok","severity":"info"}"#;
+        let result = notify(payload);
+
         assert!(result.success);
         assert!(result.error.is_null());
     }
