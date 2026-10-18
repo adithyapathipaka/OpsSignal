@@ -1,6 +1,8 @@
 //! `signal.yaml` loading.
 //!
-//! The file is resolved from `$SIGNAL_CONFIG` first, then `./signal.yaml`.
+//! The file is resolved from `$SIGNAL_CONFIG` first (a local path, or an
+//! `https://`, `s3://` or `gs://` URL; see [`crate::source`]), then
+//! `./signal.yaml`.
 //! If neither exists the SDK still works: it falls back to the
 //! zero-config default (console provider, SQLite sink at
 //! `./signals.db`), so `notify()` never needs setup to do something
@@ -14,8 +16,9 @@
 
 use crate::routing::{Route, RoutingConfig};
 use crate::signal::SignalError;
+use crate::source::{self, ConfigSource, LoadOptions};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const CONFIG_ENV_VAR: &str = "SIGNAL_CONFIG";
 pub const DEFAULT_CONFIG_FILE: &str = "signal.yaml";
@@ -74,7 +77,7 @@ pub enum SinkKind {
     Sqlite,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(default)]
@@ -121,28 +124,17 @@ impl Config {
             .map_err(|e| config_err(format!("{}: {}", path.display(), strip_prefix(&e))))
     }
 
-    /// `$SIGNAL_CONFIG` if set (and it must then exist), else
-    /// `./signal.yaml` if present, else the zero-config default.
+    /// `$SIGNAL_CONFIG` if set (a local file, which must then exist, or
+    /// a remote URL), else `./signal.yaml` if present, else the
+    /// zero-config default. A remote source is fetched once, with the
+    /// cache fallback described in [`crate::source`].
     pub fn discover() -> Result<Self, SignalError> {
-        match Self::discover_path()? {
-            Some(path) => Self::from_file(&path),
+        match ConfigSource::discover()? {
+            Some(source) => {
+                source::load_blocking(&source, &LoadOptions::from_env()?).map(|l| l.config)
+            }
             None => Ok(Config::default()),
         }
-    }
-
-    fn discover_path() -> Result<Option<PathBuf>, SignalError> {
-        if let Some(raw) = std::env::var_os(CONFIG_ENV_VAR) {
-            let path = PathBuf::from(raw);
-            if !path.is_file() {
-                return Err(config_err(format!(
-                    "${CONFIG_ENV_VAR} points to {}, which is not a file",
-                    path.display()
-                )));
-            }
-            return Ok(Some(path));
-        }
-        let local = PathBuf::from(DEFAULT_CONFIG_FILE);
-        Ok(local.is_file().then_some(local))
     }
 
     pub fn routing(&self) -> RoutingConfig {

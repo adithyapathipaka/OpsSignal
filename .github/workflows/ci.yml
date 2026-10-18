@@ -26,6 +26,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # The workspace build turns on the bindings' default s3/gcs
+      # features; check that core still builds and passes without them.
+      - name: Core without cloud features
+        run: |
+          cargo clippy -p opssignal-core --all-targets -- -D warnings
+          cargo test -p opssignal-core
 
   rust-security:
     name: Rust security (cargo-audit, cargo-deny)

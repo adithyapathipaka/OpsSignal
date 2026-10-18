@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 use opssignal_core::config::Config;
 use opssignal_core::delivery::DeliveryStatus;
 use opssignal_core::signal::{Severity, SignalInput};
+use opssignal_core::source::{ConfigSource, LoadOptions};
 use opssignal_core::SignalClient;
-use std::path::PathBuf;
 use std::time::Duration;
 
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -13,9 +13,10 @@ const NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Parser)]
 #[command(name = "signal", version, about = "Operational signal SDK CLI")]
 struct Cli {
-    /// Path to signal.yaml. Defaults to $SIGNAL_CONFIG, then ./signal.yaml.
+    /// Path or URL (https://, s3://, gs://) of signal.yaml. Defaults to
+    /// $SIGNAL_CONFIG, then ./signal.yaml.
     #[arg(long, global = true)]
-    config: Option<PathBuf>,
+    config: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -70,11 +71,7 @@ fn main() {
                 ..Default::default()
             };
 
-            let config = match &cli.config {
-                Some(path) => Config::from_file(path),
-                None => Config::discover(),
-            };
-            let client = match config.and_then(|c| SignalClient::from_config(&c)) {
+            let client = match build_client(cli.config.as_deref()) {
                 Ok(client) => client,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -98,5 +95,21 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+/// A one-shot command loads the config once; there is nothing to reload.
+fn build_client(config: Option<&str>) -> Result<SignalClient, opssignal_core::signal::SignalError> {
+    let source = match config {
+        Some(raw) => Some(ConfigSource::parse(raw)?),
+        None => ConfigSource::discover()?,
+    };
+    let opts = LoadOptions {
+        refresh: None,
+        ..LoadOptions::from_env()?
+    };
+    match source {
+        Some(source) => SignalClient::from_source(&source, &opts),
+        None => SignalClient::from_config(&Config::default()),
     }
 }

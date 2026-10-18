@@ -12,3 +12,10 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 opssignal-core = { path = "../core" }
 serde_json = "1"
+
+[features]
+# Shipped builds can read SIGNAL_CONFIG from S3 and GCS. Build with
+# --no-default-features for a smaller binary that reads files and https only.
+default = ["s3", "gcs"]
+s3 = ["opssignal-core/s3"]
+gcs = ["opssignal-core/gcs"]

@@ -21,6 +21,7 @@ flowchart TB
     end
 
     subgraph core["crates/core (all business logic)"]
+        SRC["source + reload<br/>file / https / s3 / gs, cache, polling"]
         CFG["config<br/>signal.yaml + ${VAR} interpolation"]
         CLIENT["SignalClient<br/>owns a Tokio runtime"]
         VAL["signal<br/>validate, id, timestamp, dedup key"]
@@ -35,6 +36,7 @@ flowchart TB
     PYO3 --> CLIENT
     CLIC --> CLIENT
     FFI --> CLIENT
+    SRC --> CFG
     CFG --> CLIENT
     CLIENT --> VAL
     CLIENT --> ROUTE
@@ -148,6 +150,30 @@ provider names.
 A signal that matches no route must never silently disappear — that failure
 mode is worse than not having the SDK at all. This is enforced in
 `RoutingConfig::resolve`, not left to configuration.
+
+## Config sources and reload
+
+`SIGNAL_CONFIG` can name a local file or an `https://`, `s3://` or `gs://`
+object (`crates/core/src/source.rs`). S3 and GCS sit behind the `s3` and `gcs`
+cargo features of `opssignal-core`, so the core stays light; the bindings turn
+both on. They run on the same reqwest/rustls stack as the providers rather than
+pulling in a second one.
+
+Two reliability rules shape this code:
+
+- **A config source is never a reason to lose a signal.** A remote source that
+  is unreachable or serves a broken file falls back to the last good cached
+  copy, then to the zero-config default (console only). The cache holds the
+  raw text before `${VAR}` substitution, so it never contains secrets.
+- **A reload is all or nothing.** `reload.rs` polls the source on an interval
+  (default 60 s) and, when the text changes and loads cleanly, swaps routes and
+  providers together as one `Pipeline` behind an `RwLock<Arc<_>>`. In-flight
+  deliveries keep the `Arc` they started with. A failed reload keeps the
+  current pipeline. The sink is never reopened live.
+
+Polling is used instead of filesystem notifications because Kubernetes updates
+ConfigMap mounts by swapping a symlink, which file watchers often miss, and
+the same loop covers remote sources.
 
 ## FFI panic safety
 

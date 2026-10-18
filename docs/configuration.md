@@ -4,15 +4,78 @@
 
 OpsSignal looks for its config in this order:
 
-1. The path in the `SIGNAL_CONFIG` environment variable. If it is set, the
-   file must exist, or loading fails.
+1. The `SIGNAL_CONFIG` environment variable. It can be a local path or a URL:
+
+    | Value | Source | Notes |
+    |---|---|---|
+    | `/etc/opssignal/signal.yaml` | local file | Must exist, or loading fails. |
+    | `https://config.example.com/signal.yaml` | HTTPS `GET` | Plain `http://` is accepted only for `localhost`. |
+    | `s3://bucket/path/signal.yaml` | Amazon S3 (or any S3-compatible store) | Needs the `s3` build feature. |
+    | `gs://bucket/path/signal.yaml` | Google Cloud Storage | Needs the `gcs` build feature. |
+
 2. `./signal.yaml` in the current working directory.
 3. Nothing found: the zero-config default (console provider, SQLite sink at
    `./signals.db`).
 
-The CLI also accepts `--config <path>`, which overrides both.
+The CLI also accepts `--config <path or URL>`, which overrides both.
 
-The config is loaded once per process, on the first signal.
+The Python wheel, the CLI and the C library are built with S3 and GCS support.
+If you depend on the `opssignal-core` crate directly, turn it on with
+`features = ["s3", "gcs"]`; without them the core reads files and HTTPS only.
+
+## Remote configs
+
+One `signal.yaml` in a bucket can serve every service. Each process sets
+`SIGNAL_CONFIG` to the same URL and keeps its secrets in its own environment
+(see [Environment variables in values](#environment-variables-in-values)), so
+the shared file never holds a token.
+
+**Credentials.** OpsSignal uses each platform's standard credential chain and
+has no keys of its own:
+
+- **S3:** `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, web identity (EKS IRSA),
+  ECS task roles, or the EC2 instance profile. Set `AWS_REGION` to the bucket's
+  region. `AWS_ENDPOINT_URL` points it at MinIO or another S3-compatible store.
+- **GCS:** `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT`,
+  gcloud application-default credentials, then the metadata server (GKE
+  workload identity, GCE service accounts).
+- **HTTPS:** no authentication; use a URL that is reachable only from your
+  network, or a pre-signed URL.
+
+The process only needs read access to that one object (`s3:GetObject`, or
+`storage.objects.get`).
+
+**Cache and fallback.** After every successful fetch, the raw file is cached on
+local disk, before `${VAR}` substitution, so no secret is ever written there.
+When the source can't be reached, times out (10 seconds), or returns a file
+that fails to load, OpsSignal uses the last good cached copy. If there is no
+cached copy either, it starts on the zero-config default (console only) and
+logs why, so a bucket outage never stops a service from starting or sending
+signals. It switches to the real config as soon as the source is back.
+
+## Live reload
+
+The config is re-read every 60 seconds and changes are applied without a
+restart, for local files and remote sources alike. A change replaces the
+routes and providers as one unit, so no signal sees new routes with old
+providers.
+
+A reload that can't be fetched or fails to load is skipped and logged, and the
+current config stays in place. A broken edit can't take alerting down.
+
+Changes to `storage` are not applied live, because reopening the sink under
+traffic could lose writes. They are logged and take effect on the next
+restart.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SIGNAL_CONFIG_REFRESH_SECS` | `60` | Seconds between checks. `0` loads once and never reloads. |
+| `SIGNAL_CONFIG_CACHE_DIR` | `$XDG_CACHE_HOME/opssignal`, else `~/.cache/opssignal` | Where remote configs are cached. |
+
+The CLI sends one signal and exits, so it loads the config once.
+
+See [Kubernetes](kubernetes.md) for a ConfigMap and Secret setup that uses
+live reload.
 
 ## Example
 
@@ -103,4 +166,9 @@ These all stop the config from loading, and the message says which rule failed:
 - an unknown key anywhere in the file
 - an unset `${VAR}`, or an unterminated or empty `${}` placeholder
 - a route that references an unconfigured provider, or lists no providers
-- `SIGNAL_CONFIG` pointing at a path that is not a file
+- `SIGNAL_CONFIG` pointing at a path that is not a file, or using an
+  unsupported URL scheme
+- `SIGNAL_CONFIG_REFRESH_SECS` that is not a whole number
+
+A remote source that can't be fetched is not on this list: it falls back as
+described in [Remote configs](#remote-configs).
