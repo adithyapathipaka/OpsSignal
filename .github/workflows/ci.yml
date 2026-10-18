@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to the same branch cancels the run it replaces.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust (fmt, clippy, test)
@@ -14,6 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -27,12 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      # Prebuilt binaries: `cargo install` compiled both tools from
+      # source on every run, which took over 6 minutes.
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
       - name: Audit dependencies for known CVEs
         run: cargo audit
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
       - name: Check licenses and bans
         run: cargo deny check
 
@@ -42,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: astral-sh/setup-uv@v3
       - name: Install dev tools
         run: uv sync --dev
