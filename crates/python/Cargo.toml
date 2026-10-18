@@ -15,8 +15,9 @@ pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
 serde_json = "1"
 
 [features]
-# Shipped builds can read SIGNAL_CONFIG from S3 and GCS. Build with
+# Shipped builds can read SIGNAL_CONFIG from S3, GCS and Azure. Build with
 # --no-default-features for a smaller binary that reads files and https only.
-default = ["s3", "gcs"]
+default = ["s3", "gcs", "azure"]
 s3 = ["opssignal-core/s3"]
 gcs = ["opssignal-core/gcs"]
+azure = ["opssignal-core/azure"]

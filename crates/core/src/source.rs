@@ -6,10 +6,13 @@
 //! - `https://config.example.com/signal.yaml`: plain GET
 //! - `s3://bucket/key`: needs the `s3` cargo feature
 //! - `gs://bucket/object`: needs the `gcs` cargo feature
+//! - `az://container/blob`: needs the `azure` cargo feature; the storage
+//!   account comes from `$AZURE_STORAGE_ACCOUNT_NAME`
 //!
 //! Cloud fetches use each platform's standard credential chain (IAM
 //! role / IRSA / env keys on AWS; workload identity / ADC / service
-//! account on GCP), so OpsSignal adds no keys of its own.
+//! account on GCP; workload identity / managed identity / service
+//! principal / SAS on Azure), so OpsSignal adds no keys of its own.
 //!
 //! A remote config is cached on local disk after every successful
 //! fetch, as the raw text *before* `${VAR}` interpolation, so no
@@ -42,6 +45,10 @@ pub enum ConfigSource {
         bucket: String,
         object: String,
     },
+    Azure {
+        container: String,
+        blob: String,
+    },
 }
 
 impl fmt::Display for ConfigSource {
@@ -51,6 +58,7 @@ impl fmt::Display for ConfigSource {
             ConfigSource::Http(url) => f.write_str(url),
             ConfigSource::S3 { bucket, key } => write!(f, "s3://{bucket}/{key}"),
             ConfigSource::Gcs { bucket, object } => write!(f, "gs://{bucket}/{object}"),
+            ConfigSource::Azure { container, blob } => write!(f, "az://{container}/{blob}"),
         }
     }
 }
@@ -67,6 +75,10 @@ impl ConfigSource {
         if let Some(rest) = raw.strip_prefix("gs://") {
             let (bucket, object) = split_bucket(rest, raw)?;
             return Ok(ConfigSource::Gcs { bucket, object });
+        }
+        if let Some(rest) = raw.strip_prefix("az://") {
+            let (container, blob) = split_bucket(rest, raw)?;
+            return Ok(ConfigSource::Azure { container, blob });
         }
         if raw.starts_with("https://") {
             return Ok(ConfigSource::Http(raw.to_string()));
@@ -88,7 +100,7 @@ impl ConfigSource {
         }
         if raw.contains("://") {
             return Err(config_err(format!(
-                "{raw}: unsupported scheme (use a local path, https://, s3:// or gs://)"
+                "{raw}: unsupported scheme (use a local path, https://, s3://, gs:// or az://)"
             )));
         }
         Ok(ConfigSource::File(PathBuf::from(raw)))
@@ -127,6 +139,7 @@ impl ConfigSource {
             ConfigSource::Http(url) => fetch_http(url).await,
             ConfigSource::S3 { bucket, key } => fetch_s3(bucket, key).await,
             ConfigSource::Gcs { bucket, object } => fetch_gcs(bucket, object).await,
+            ConfigSource::Azure { container, blob } => fetch_azure(container, blob).await,
         }
         .map_err(|e| config_err(format!("{self}: {}", strip_prefix(&e))))
     }
@@ -170,10 +183,17 @@ struct ReqwestConnector;
 impl object_store::client::HttpConnector for ReqwestConnector {
     fn connect(
         &self,
-        _options: &object_store::ClientOptions,
+        options: &object_store::ClientOptions,
     ) -> object_store::Result<object_store::client::HttpClient> {
+        // object_store refuses plain http unless allowed (it allows it
+        // for metadata and token endpoints, or when AWS_ALLOW_HTTP and
+        // friends are set); keep that rule with our own client.
+        let allow_http = options
+            .get_config_value(&object_store::ClientConfigKey::AllowHttp)
+            .is_some_and(|v| v == "true");
         let client = reqwest::Client::builder()
             .timeout(FETCH_TIMEOUT)
+            .https_only(!allow_http)
             .build()
             .map_err(|e| object_store::Error::Generic {
                 store: "opssignal",
@@ -299,6 +319,26 @@ async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
 async fn fetch_gcs(_bucket: &str, _object: &str) -> Result<String, SignalError> {
     Err(config_err(
         "this build has no GCS support (enable the `gcs` cargo feature of opssignal-core)",
+    ))
+}
+
+#[cfg(feature = "azure")]
+async fn fetch_azure(container: &str, blob: &str) -> Result<String, SignalError> {
+    // from_env picks up AZURE_STORAGE_ACCOUNT_NAME plus an account key,
+    // SAS token, service principal, AKS workload identity
+    // (AZURE_FEDERATED_TOKEN_FILE), then the managed identity endpoint.
+    let store = object_store::azure::MicrosoftAzureBuilder::from_env()
+        .with_container_name(container)
+        .with_http_connector(ReqwestConnector)
+        .build()
+        .map_err(|e| config_err(e.to_string()))?;
+    fetch_object(store, blob).await
+}
+
+#[cfg(not(feature = "azure"))]
+async fn fetch_azure(_container: &str, _blob: &str) -> Result<String, SignalError> {
+    Err(config_err(
+        "this build has no Azure support (enable the `azure` cargo feature of opssignal-core)",
     ))
 }
 
@@ -503,6 +543,13 @@ mod tests {
             }
         );
         assert_eq!(
+            ConfigSource::parse("az://ops-config/prod/signal.yaml").expect("valid source"),
+            ConfigSource::Azure {
+                container: "ops-config".into(),
+                blob: "prod/signal.yaml".into()
+            }
+        );
+        assert_eq!(
             ConfigSource::parse("https://cfg.example.test/signal.yaml").expect("valid source"),
             ConfigSource::Http("https://cfg.example.test/signal.yaml".into())
         );
@@ -526,6 +573,7 @@ mod tests {
         assert!(ConfigSource::parse("s3://bucket-only").is_err());
         assert!(ConfigSource::parse("s3://bucket/").is_err());
         assert!(ConfigSource::parse("gs:///signal.yaml").is_err());
+        assert!(ConfigSource::parse("az://container-only").is_err());
     }
 
     #[test]
@@ -539,6 +587,7 @@ mod tests {
         for raw in [
             "s3://b/k/signal.yaml",
             "gs://b/signal.yaml",
+            "az://c/signal.yaml",
             "https://x.test/a",
         ] {
             assert_eq!(
@@ -584,5 +633,16 @@ mod tests {
             .await
             .expect_err("must be rejected");
         assert!(err.to_string().contains("`gcs` cargo feature"));
+    }
+
+    #[cfg(not(feature = "azure"))]
+    #[tokio::test]
+    async fn azure_without_the_feature_says_how_to_enable_it() {
+        let err = ConfigSource::parse("az://c/k")
+            .expect("valid source")
+            .fetch()
+            .await
+            .expect_err("must be rejected");
+        assert!(err.to_string().contains("`azure` cargo feature"));
     }
 }

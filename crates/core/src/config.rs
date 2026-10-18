@@ -1,7 +1,7 @@
 //! `signal.yaml` loading.
 //!
 //! The file is resolved from `$SIGNAL_CONFIG` first (a local path, or an
-//! `https://`, `s3://` or `gs://` URL; see [`crate::source`]), then
+//! `https://`, `s3://`, `gs://` or `az://` URL; see [`crate::source`]), then
 //! `./signal.yaml`.
 //! If neither exists the SDK still works: it falls back to the
 //! zero-config default (console provider, SQLite sink at

@@ -313,3 +313,26 @@ fn gcs_source_reads_the_object_with_the_standard_google_env() {
 
     assert_eq!(provider_names(&client), ["console", "webhook"]);
 }
+
+/// Same for Azure Blob Storage, with a SAS token standing in for
+/// workload or managed identity.
+#[cfg(feature = "azure")]
+#[test]
+fn azure_source_reads_the_blob_with_the_standard_azure_env() {
+    let dir = scratch("azure");
+    let server = Server::start();
+    server.serve(
+        "/ops-config/prod/signal.yaml",
+        200,
+        &webhook_yaml(&dir, "https://hooks.example.test/x"),
+    );
+    std::env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "opsaccount");
+    std::env::set_var("AZURE_STORAGE_ENDPOINT", server.server.uri());
+    std::env::set_var("AZURE_STORAGE_SAS_KEY", "sv=2024-01-01&sig=test");
+    std::env::set_var("AZURE_ALLOW_HTTP", "true");
+    let source = ConfigSource::parse("az://ops-config/prod/signal.yaml").expect("source");
+
+    let client = SignalClient::from_source(&source, &opts(&dir, None)).expect("client");
+
+    assert_eq!(provider_names(&client), ["console", "webhook"]);
+}

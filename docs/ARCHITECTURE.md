@@ -21,7 +21,7 @@ flowchart TB
     end
 
     subgraph core["crates/core (all business logic)"]
-        SRC["source + reload<br/>file / https / s3 / gs, cache, polling"]
+        SRC["source + reload<br/>file / https / s3 / gs / az, cache, polling"]
         CFG["config<br/>signal.yaml + ${VAR} interpolation"]
         CLIENT["SignalClient<br/>owns a Tokio runtime"]
         VAL["signal<br/>validate, id, timestamp, dedup key"]
@@ -153,10 +153,10 @@ mode is worse than not having the SDK at all. This is enforced in
 
 ## Config sources and reload
 
-`SIGNAL_CONFIG` can name a local file or an `https://`, `s3://` or `gs://`
-object (`crates/core/src/source.rs`). S3 and GCS sit behind the `s3` and `gcs`
-cargo features of `opssignal-core`, so the core stays light; the bindings turn
-both on. They run on the same reqwest/rustls stack as the providers rather than
+`SIGNAL_CONFIG` can name a local file or an `https://`, `s3://`, `gs://` or
+`az://` object (`crates/core/src/source.rs`). The cloud stores sit behind the
+`s3`, `gcs` and `azure` cargo features of `opssignal-core`, so the core stays
+light; the bindings turn all three on. They run on the same reqwest/rustls stack as the providers rather than
 pulling in a second one.
 
 Two reliability rules shape this code:

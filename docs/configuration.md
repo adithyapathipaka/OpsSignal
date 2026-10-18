@@ -12,6 +12,7 @@ OpsSignal looks for its config in this order:
     | `https://config.example.com/signal.yaml` | HTTPS `GET` | Plain `http://` is accepted only for `localhost`. |
     | `s3://bucket/path/signal.yaml` | Amazon S3 (or any S3-compatible store) | Needs the `s3` build feature. |
     | `gs://bucket/path/signal.yaml` | Google Cloud Storage | Needs the `gcs` build feature. |
+    | `az://container/path/signal.yaml` | Azure Blob Storage | Needs the `azure` build feature. Set `AZURE_STORAGE_ACCOUNT_NAME` to the storage account. |
 
 2. `./signal.yaml` in the current working directory.
 3. Nothing found: the zero-config default (console provider, SQLite sink at
@@ -19,9 +20,10 @@ OpsSignal looks for its config in this order:
 
 The CLI also accepts `--config <path or URL>`, which overrides both.
 
-The Python wheel, the CLI and the C library are built with S3 and GCS support.
-If you depend on the `opssignal-core` crate directly, turn it on with
-`features = ["s3", "gcs"]`; without them the core reads files and HTTPS only.
+The Python wheel, the CLI and the C library are built with S3, GCS and Azure
+support. If you depend on the `opssignal-core` crate directly, turn it on with
+`features = ["s3", "gcs", "azure"]`; without them the core reads files and
+HTTPS only.
 
 ## Remote configs
 
@@ -39,11 +41,15 @@ has no keys of its own:
 - **GCS:** `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT`,
   gcloud application-default credentials, then the metadata server (GKE
   workload identity, GCE service accounts).
+- **Azure:** AKS workload identity (`AZURE_FEDERATED_TOKEN_FILE`, set by the
+  workload identity webhook), managed identity, a service principal
+  (`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`/`AZURE_TENANT_ID`), a SAS token
+  (`AZURE_STORAGE_SAS_KEY`) or an account key.
 - **HTTPS:** no authentication; use a URL that is reachable only from your
   network, or a pre-signed URL.
 
-The process only needs read access to that one object (`s3:GetObject`, or
-`storage.objects.get`).
+The process only needs read access to that one object (`s3:GetObject`,
+`storage.objects.get`, or the Storage Blob Data Reader role on Azure).
 
 **Cache and fallback.** After every successful fetch, the raw file is cached on
 local disk, before `${VAR}` substitution, so no secret is ever written there.

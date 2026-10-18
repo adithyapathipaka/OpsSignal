@@ -111,7 +111,7 @@ OpsSignal without any app touching the config.
 ## Across clusters: a config in a bucket
 
 To share one config across clusters or with non-Kubernetes hosts, put
-`signal.yaml` in S3 or GCS and point `SIGNAL_CONFIG` at it:
+`signal.yaml` in S3, GCS or Azure Blob Storage and point `SIGNAL_CONFIG` at it:
 
 ```yaml
 env:
@@ -121,7 +121,10 @@ env:
     value: us-east-1
 ```
 
-Give the pod's service account read access to that object through IRSA on EKS
-or workload identity on GKE; no access keys are needed. See
+On AKS the equivalent is `SIGNAL_CONFIG=az://ops-config/prod/signal.yaml`
+with `AZURE_STORAGE_ACCOUNT_NAME` set to the storage account.
+
+Give the pod's service account read access to that object through IRSA on EKS,
+or workload identity on GKE or AKS; no access keys are needed. See
 [Remote configs](configuration.md#remote-configs) for the cache and fallback
 behaviour.

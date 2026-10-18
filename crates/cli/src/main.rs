@@ -13,7 +13,7 @@ const NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Parser)]
 #[command(name = "signal", version, about = "Operational signal SDK CLI")]
 struct Cli {
-    /// Path or URL (https://, s3://, gs://) of signal.yaml. Defaults to
+    /// Path or URL (https://, s3://, gs://, az://) of signal.yaml. Defaults to
     /// $SIGNAL_CONFIG, then ./signal.yaml.
     #[arg(long, global = true)]
     config: Option<String>,

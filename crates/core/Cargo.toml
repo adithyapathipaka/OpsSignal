@@ -37,6 +37,8 @@ default = []
 s3 = ["object-store", "object_store/aws-base"]
 # SIGNAL_CONFIG=gs://bucket/object
 gcs = ["object-store", "object_store/gcp-base"]
+# SIGNAL_CONFIG=az://container/blob
+azure = ["object-store", "object_store/azure-base"]
 object-store = ["dep:object_store", "object_store/ring", "dep:bytes", "dep:http"]
 
 [dev-dependencies]
