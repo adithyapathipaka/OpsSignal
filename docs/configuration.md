@@ -13,6 +13,8 @@ OpsSignal looks for its config in this order:
     | `s3://bucket/path/signal.yaml` | Amazon S3 (or any S3-compatible store) | Python: `opssignal[aws]`. |
     | `gs://bucket/path/signal.yaml` | Google Cloud Storage | Python: `opssignal[gcp]`. |
     | `az://container/path/signal.yaml` | Azure Blob Storage | Python: `opssignal[azure]`. Set `AZURE_STORAGE_ACCOUNT_NAME` to the storage account. |
+    | `appconfig://application/environment/profile` | AWS AppConfig | Python: `opssignal[aws]`. See [Managed config services](#managed-config-services). |
+    | `azappconfig://store/key?label=prod` | Azure App Configuration | Python: `opssignal[azure]`. `?label=` is optional. |
 
 2. `./signal.yaml` in the current working directory.
 3. Nothing found: the zero-config default (console provider, SQLite sink at
@@ -30,9 +32,9 @@ extra that installs a small native add-on, which `opssignal` finds on its own:
 
 | Install | Adds |
 |---|---|
-| `pip install 'opssignal[aws]'` | `s3://` |
+| `pip install 'opssignal[aws]'` | `s3://`, `appconfig://` |
 | `pip install 'opssignal[gcp]'` | `gs://` |
-| `pip install 'opssignal[azure]'` | `az://` |
+| `pip install 'opssignal[azure]'` | `az://`, `azappconfig://` |
 | `pip install 'opssignal[all]'` | all three |
 
 If `SIGNAL_CONFIG` names a cloud whose extra isn't installed, the first
@@ -46,13 +48,13 @@ feature named like the pip extra:
 
 | Build | Adds |
 |---|---|
-| `cargo build -p opssignal-cli --features aws` | `s3://` |
+| `cargo build -p opssignal-cli --features aws` | `s3://`, `appconfig://` |
 | `cargo build -p opssignal-cli --features gcp` | `gs://` |
-| `cargo build -p opssignal-cli --features azure` | `az://` |
+| `cargo build -p opssignal-cli --features azure` | `az://`, `azappconfig://` |
 | `cargo build -p opssignal-cli --features all` | all three |
 
 The same features exist on `opssignal-ffi` for the C library. If you depend on
-the `opssignal-core` crate directly, the features are `s3`, `gcs` and `azure`;
+the `opssignal-core` crate directly, the features are `aws`, `gcp` and `azure`;
 without them the core reads files and HTTPS only.
 
 ## Remote configs
@@ -80,6 +82,41 @@ has no keys of its own:
 
 The process only needs read access to that one object (`s3:GetObject`,
 `storage.objects.get`, or the Storage Blob Data Reader role on Azure).
+
+### Managed config services
+
+AWS AppConfig and Azure App Configuration hold the same YAML as a file, and
+add change control a bucket doesn't have. AppConfig validates a change before
+it goes live, rolls it out gradually with a deployment strategy, and rolls it
+back automatically on a CloudWatch alarm. App Configuration keeps a label per
+environment, a revision history and snapshots, so a bad edit can be restored
+to an earlier value. Each team's file is one profile or key,
+and `extends:` works between them:
+
+```yaml
+# appconfig://opssignal/prod/payments
+extends: default          # the "default" profile of the same application and environment
+```
+
+```yaml
+# azappconfig://ops-config/opssignal/teams/payments?label=prod
+extends: ../default       # key opssignal/default, same store and label
+```
+
+| | AWS AppConfig | Azure App Configuration |
+|---|---|---|
+| URL | `appconfig://<application>/<environment>/<profile>` (names or IDs) | `azappconfig://<store>/<key>[?label=<label>]` |
+| Credentials | The AWS chain above | Workload identity, service principal or managed identity, as above |
+| Permissions | `appconfig:StartConfigurationSession`, `appconfig:GetLatestConfiguration` | App Configuration Data Reader |
+| Endpoint override | `AWS_ENDPOINT_URL_APPCONFIGDATA` | `AZURE_APPCONFIG_ENDPOINT`, with `{store}` in it, for sovereign clouds |
+
+**What polling costs.** AppConfig bills for each configuration it sends, so
+OpsSignal keeps its polling session between checks: an unchanged profile
+returns an empty, unbilled answer. App Configuration is asked with the last
+ETag, so an unchanged key costs a request but no download. Each check is
+still one request per file per process, which matters on App Configuration's
+request quotas when thousands of pods poll: raise
+`SIGNAL_CONFIG_REFRESH_SECS` there if needed.
 
 **Cache and fallback.** After every successful fetch, the raw file is cached on
 local disk, before `${VAR}` substitution, so no secret is ever written there.

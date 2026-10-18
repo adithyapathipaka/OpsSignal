@@ -34,9 +34,9 @@ http = { version = "1", optional = true }
 [features]
 default = []
 # SIGNAL_CONFIG=s3://bucket/key
-s3 = ["object-store", "object_store/aws-base"]
+aws = ["object-store", "object_store/aws-base"]
 # SIGNAL_CONFIG=gs://bucket/object
-gcs = ["object-store", "object_store/gcp-base"]
+gcp = ["object-store", "object_store/gcp-base"]
 # SIGNAL_CONFIG=az://container/blob
 azure = ["object-store", "object_store/azure-base"]
 object-store = ["dep:object_store", "object_store/ring", "dep:bytes", "dep:http"]

@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 mod chain;
+#[cfg(feature = "object-store")]
+mod cloud;
 pub mod config;
 pub mod delivery;
 pub mod providers;

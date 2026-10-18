@@ -153,9 +153,14 @@ mode is worse than not having the SDK at all. This is enforced in
 
 ## Config sources and reload
 
-`SIGNAL_CONFIG` can name a local file or an `https://`, `s3://`, `gs://` or
-`az://` object (`crates/core/src/source.rs`). The cloud stores sit behind the
-`s3`, `gcs` and `azure` cargo features of `opssignal-core`, so the core stays
+`SIGNAL_CONFIG` can name a local file, an `https://`, `s3://`, `gs://` or
+`az://` object, an AWS AppConfig profile (`appconfig://`) or an Azure App
+Configuration key (`azappconfig://`) (`crates/core/src/source.rs`). The cloud
+code lives in `crates/core/src/cloud/`, one module per cloud, and non-storage
+services are signed with the credentials object_store already resolves (SigV4
+on AWS; Entra tokens for the service's own audience on Azure), so no cloud SDK
+is in the tree. The cloud stores sit behind the
+`aws`, `gcp` and `azure` cargo features of `opssignal-core`, so the core stays
 light. They run on the same reqwest/rustls stack as the providers rather than
 pulling in a second one.
 
@@ -166,7 +171,8 @@ each cloud ships as its own wheel (`crates/python-aws`, `-gcp`, `-azure`),
 installed through the `opssignal[aws]`, `[gcp]` and `[azure]` extras, because
 pip extras can add packages but cannot change what is compiled into one. At
 startup the base binding imports whichever add-ons are installed and registers
-each one's `fetch` with the core (`source::register_fetcher`). The core calls
+each one's `fetch` with the core for every scheme of its cloud
+(`source::register_cloud_fetcher`). The core calls
 it on a plain thread for that scheme, with the same cache and fallback rules.
 An add-on is a thin wrapper around `source::fetch_blocking`; it has no logic of
 its own.

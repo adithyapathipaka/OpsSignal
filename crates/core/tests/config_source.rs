@@ -268,7 +268,7 @@ fn starting_on_defaults_picks_up_the_source_once_it_is_back() {
 
 /// Talks to a mock S3 endpoint with static keys, which is how the
 /// standard AWS credential chain resolves when they are in the env.
-#[cfg(feature = "s3")]
+#[cfg(feature = "aws")]
 #[test]
 fn s3_source_reads_the_object_with_the_standard_aws_env() {
     let dir = scratch("s3");
@@ -293,7 +293,7 @@ fn s3_source_reads_the_object_with_the_standard_aws_env() {
 
 /// Same for GCS, with a static bearer token standing in for workload
 /// identity.
-#[cfg(feature = "gcs")]
+#[cfg(feature = "gcp")]
 #[test]
 fn gcs_source_reads_the_object_with_the_standard_google_env() {
     let dir = scratch("gcs");
