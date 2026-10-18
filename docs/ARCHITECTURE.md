@@ -26,7 +26,7 @@ flowchart TB
         CLIENT["SignalClient<br/>owns a Tokio runtime"]
         VAL["signal<br/>validate, id, timestamp, dedup key"]
         ROUTE["routing<br/>resolve(), console fallback"]
-        PROV["providers<br/>console, slack, webhook"]
+        PROV["providers<br/>console, slack, webhook,<br/>pagerduty, teams"]
         SINK["sink<br/>SqliteSink"]
     end
 
@@ -42,7 +42,7 @@ flowchart TB
     CLIENT --> ROUTE
     ROUTE --> PROV
     CLIENT --> SINK
-    PROV --> EXT["Slack / HTTP endpoints / stdout"]
+    PROV --> EXT["Slack / Teams / PagerDuty / HTTP endpoints / stdout"]
     SINK --> DB[("signals.db")]
 ```
 
