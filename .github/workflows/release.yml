@@ -1,0 +1,227 @@
+name: Release
+
+# Pushing a vX.Y.Z tag builds every package, tests the wheels, and then
+# publishes:
+#   PyPI:      opssignal-aws, opssignal-gcp, opssignal-azure, then opssignal
+#   crates.io: opssignal-core, then opssignal-cli
+# and attaches the same files to a GitHub release.
+#
+# Run it by hand (Actions > Release > Run workflow) or open a PR that
+# touches packaging to build and test everything without publishing.
+# One-time account setup is in docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - python/pyproject.toml
+      - python/addons/*/pyproject.toml
+      - scripts/check_versions.py
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: Versions agree
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check package versions (and the tag, on a release)
+        run: python scripts/check_versions.py ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+
+  # The wheels are abi3 (pyo3 abi3-py39), so one wheel per platform covers
+  # every CPython from 3.9 up.
+  wheels:
+    name: Wheel ${{ matrix.package }} (${{ matrix.platform.name }})
+    needs: versions
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [opssignal, aws, gcp, azure]
+        platform:
+          - { name: linux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { name: linux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { name: musllinux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { name: musllinux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
+          - { name: macos-x86_64, runner: macos-latest, target: x86_64-apple-darwin }
+          - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin }
+          - { name: windows-x86_64, runner: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: ${{ matrix.package == 'opssignal' && 'python' || format('python/addons/{0}', matrix.package) }}
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out ${{ github.workspace }}/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.package }}-${{ matrix.platform.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdists:
+    name: Source distributions
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdists
+        run: |
+          pipx install 'maturin>=1.5,<2.0'
+          for dir in python python/addons/aws python/addons/gcp python/addons/azure; do
+            (cd "$dir" && maturin sdist --out "$GITHUB_WORKSPACE/dist")
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdists
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Install the built wheels the way a user would, with no index to fall
+  # back on, and send one console signal.
+  smoke:
+    name: Smoke test (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Install opssignal[all] from the built wheels
+        run: python -m pip install --no-index --find-links dist "opssignal[all]"
+      - name: Import every package and send a signal
+        working-directory: ${{ runner.temp }}
+        run: >
+          python -c "import opssignal, opssignal_aws, opssignal_gcp, opssignal_azure;
+          opssignal.notify(source='release', event_type='smoke_test', title='wheel works', severity='info');
+          print('opssignal', opssignal.__version__)"
+
+  crates:
+    name: crates.io dry run
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Packages both crates and builds them from the packaged sources,
+      # as crates.io will see them; opssignal-cli resolves its
+      # opssignal-core dependency from the local package.
+      - run: cargo publish --dry-run -p opssignal-core -p opssignal-cli
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [wheels, sdists, smoke, crates]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/opssignal/
+    permissions:
+      id-token: write  # PyPI trusted publishing; no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # The add-ons go first: opssignal's [aws]/[gcp]/[azure] extras pin
+      # them, so they must exist before anyone can install opssignal.
+      - name: Split add-ons from the base package
+        run: |
+          mkdir addons base
+          mv dist/opssignal_aws-* dist/opssignal_gcp-* dist/opssignal_azure-* addons/
+          mv dist/* base/
+          ls addons base
+      - name: Upload opssignal-aws, opssignal-gcp, opssignal-azure
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: addons/
+          skip-existing: true  # a re-run resumes where it stopped
+      - name: Upload opssignal
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: base/
+          skip-existing: true  # a re-run resumes where it stopped
+
+  publish-crates:
+    name: Publish to crates.io
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/opssignal-core
+    permissions:
+      id-token: write  # crates.io trusted publishing
+    env:
+      # crates.io trusted publishing only works for crates that already
+      # exist, so the very first release uses a token. Delete the secret
+      # once trusted publishing is set up.
+      FIRST_RELEASE_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Get a crates.io token by trusted publishing
+        id: auth
+        if: env.FIRST_RELEASE_TOKEN == ''
+        uses: rust-lang/crates-io-auth-action@v1
+      # Skips a crate whose version is already on crates.io, so a re-run
+      # resumes where it stopped.
+      - name: Publish opssignal-core, then opssignal-cli
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "opssignal-core") | .version')
+          for crate in opssignal-core opssignal-cli; do
+            if curl -sf -A "opssignal-release ($GITHUB_REPOSITORY)" "https://crates.io/api/v1/crates/$crate/$version" > /dev/null; then
+              echo "$crate $version is already on crates.io, skipping"
+            else
+              cargo publish -p "$crate"
+            fi
+          done
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || env.FIRST_RELEASE_TOKEN }}
+
+  github-release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-crates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release with every wheel and sdist attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

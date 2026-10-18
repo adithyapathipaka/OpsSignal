@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+# Not on crates.io: C users build it from source (see crates/ffi).
+publish = false
 
 [lib]
 name = "opssignal_ffi"
