@@ -1,5 +1,6 @@
 //! The `opssignal-gcp` add-on: lets the base `opssignal` Python
-//! package read configs from Google Cloud Storage (gs://). The base package
+//! package read configs from Google Cloud (gs://, firestore://) and
+//! Secret Manager placeholders (`${gcp-sm:...}`). The base package
 //! looks for this module when it builds its client and sends every
 //! fetch for those schemes to [`fetch`]; all the logic is in
 //! `opssignal-core`, compiled here with its `gcp` feature.

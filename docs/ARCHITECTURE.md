@@ -185,8 +185,13 @@ Two reliability rules shape this code:
   is unreachable or serves a broken file falls back to the last good cached
   copy, then to the zero-config default (console only). The cache holds the
   raw text before `${VAR}` substitution, so it never contains secrets.
+  `${aws-sm:...}`, `${gcp-sm:...}` and `${azure-kv:...}` placeholders are
+  resolved by `secrets.rs` after each file is fetched (values cached in memory
+  for `SIGNAL_SECRETS_TTL_SECS`); a store that can't be reached is handled
+  like an unreachable source.
 - **A reload is all or nothing.** `reload.rs` polls the source on an interval
-  (default 60 s) and, when the text changes and loads cleanly, swaps routes and
+  (default 60 s) and, when the text or a fingerprint of its resolved secrets
+  changes and loads cleanly, swaps routes and
   providers together as one `Pipeline` behind an `RwLock<Arc<_>>`. In-flight
   deliveries keep the `Arc` they started with. A failed reload keeps the
   current pipeline. The sink is never reopened live.

@@ -9,6 +9,7 @@
 //! extend the same default) is loaded once, at its first position.
 
 use crate::config::Layer;
+use crate::secrets;
 use crate::signal::SignalError;
 use crate::source::{self, ConfigSource, LoadOptions};
 use std::collections::HashSet;
@@ -36,6 +37,9 @@ pub(crate) enum Mode<'a> {
 pub(crate) struct Fetched {
     pub source: ConfigSource,
     pub text: String,
+    /// Fingerprint of the secrets the text referenced, so a rotated
+    /// secret counts as a change. Empty when it has none.
+    pub secrets: String,
 }
 
 pub(crate) struct ChainError {
@@ -70,11 +74,12 @@ pub(crate) async fn walk(
     Ok(walk.order)
 }
 
-/// `(source, raw text)` of each walked file, to tell when one changes.
+/// `(source, raw text, secrets digest)` of each walked file, to tell
+/// when one changes.
 pub(crate) fn texts(files: &[(Fetched, Layer)]) -> source::Texts {
     files
         .iter()
-        .map(|(f, _)| (f.source.to_string(), f.text.clone()))
+        .map(|(f, _)| (f.source.to_string(), f.text.clone(), f.secrets.clone()))
         .collect()
 }
 
@@ -130,7 +135,11 @@ impl<'a> Walk<'a> {
             }
             source.check_supported().map_err(ChainError::fatal)?;
 
-            let (text, layer) = self.load(&source).await?;
+            let Built {
+                text,
+                layer,
+                secrets,
+            } = self.load(&source).await?;
             self.stack.push(key.clone());
             for parent in &layer.extends {
                 let parent = source.join(parent).map_err(ChainError::fatal)?;
@@ -138,61 +147,110 @@ impl<'a> Walk<'a> {
             }
             self.stack.pop();
             self.seen.insert(key);
-            self.order.push((Fetched { source, text }, layer));
+            self.order.push((
+                Fetched {
+                    source,
+                    text,
+                    secrets,
+                },
+                layer,
+            ));
             Ok(())
         })
     }
 
-    async fn load(&self, source: &ConfigSource) -> Result<(String, Layer), ChainError> {
+    async fn load(&self, source: &ConfigSource) -> Result<Built, ChainError> {
         if let (Mode::CacheOnly(opts), true) = (&self.mode, source.is_remote()) {
-            return read_cache(opts, source).map_err(|err| ChainError { err, fatal: false });
+            return match read_cache(opts, source).await {
+                Ok(built) => Ok(built),
+                Err(Failure::Secrets(e)) => Err(e),
+                Err(Failure::Text(err)) => Err(ChainError { err, fatal: false }),
+            };
         }
         let fresh = match source.fetch().await {
-            Ok(text) => parse(source, &text).map(|layer| (text, layer)),
-            Err(e) => Err(e),
+            Ok(text) => build(source, text).await,
+            Err(e) => Err(Failure::Text(e)),
         };
         let err = match fresh {
-            Ok(loaded) => return Ok(loaded),
-            Err(e) => e,
+            Ok(built) => return Ok(built),
+            // The cached copy names the same secrets, so it can't help.
+            Err(Failure::Secrets(e)) => return Err(e),
+            Err(Failure::Text(e)) => e,
         };
         if !source.is_remote() {
             return Err(ChainError::fatal(err));
         }
         if let Mode::Startup(opts) = &self.mode {
-            match read_cache(opts, source) {
-                Ok(loaded) => {
+            match read_cache(opts, source).await {
+                Ok(built) => {
                     tracing::warn!("{err}; using the cached copy");
-                    return Ok(loaded);
+                    return Ok(built);
                 }
-                Err(cache_err) => tracing::warn!("{cache_err}"),
+                Err(Failure::Secrets(e)) => return Err(e),
+                Err(Failure::Text(cache_err)) => tracing::warn!("{cache_err}"),
             }
         }
         Err(ChainError { err, fatal: false })
     }
 }
 
-fn read_cache(opts: &LoadOptions, source: &ConfigSource) -> Result<(String, Layer), SignalError> {
+/// A file read, its secrets resolved and parsed.
+struct Built {
+    text: String,
+    layer: Layer,
+    secrets: String,
+}
+
+enum Failure {
+    /// The text could not be read or parsed; a cached copy may do.
+    Text(SignalError),
+    /// Its secrets could not be resolved, whichever copy is used.
+    Secrets(ChainError),
+}
+
+async fn build(source: &ConfigSource, text: String) -> Result<Built, Failure> {
+    let names = Layer::secret_refs(&text).map_err(|e| Failure::Text(described(source, &e)))?;
+    let values = if names.is_empty() {
+        Default::default()
+    } else {
+        secrets::resolve(&names).await.map_err(|e| {
+            Failure::Secrets(ChainError {
+                err: described(source, &e.err),
+                fatal: e.fatal,
+            })
+        })?
+    };
+    let layer = Layer::from_yaml_str_with(&text, &values)
+        .map_err(|e| Failure::Text(described(source, &e)))?;
+    Ok(Built {
+        text,
+        layer,
+        secrets: secrets::digest(&values),
+    })
+}
+
+async fn read_cache(opts: &LoadOptions, source: &ConfigSource) -> Result<Built, Failure> {
     let path = opts
         .cache_path(source)
-        .ok_or_else(|| config_err(format!("{source}: config cache is off")))?;
+        .ok_or_else(|| Failure::Text(config_err(format!("{source}: config cache is off"))))?;
     let text = std::fs::read_to_string(&path).map_err(|e| {
-        config_err(format!(
+        Failure::Text(config_err(format!(
             "{source}: no cached copy at {}: {e}",
             path.display()
-        ))
+        )))
     })?;
-    let layer = parse(source, &text).map_err(|e| {
-        config_err(format!(
+    match build(source, text).await {
+        Err(Failure::Text(e)) => Err(Failure::Text(config_err(format!(
             "cached config at {} is unusable: {}",
             path.display(),
             source::message(&e)
-        ))
-    })?;
-    Ok((text, layer))
+        )))),
+        other => other,
+    }
 }
 
-fn parse(source: &ConfigSource, text: &str) -> Result<Layer, SignalError> {
-    Layer::from_yaml_str(text).map_err(|e| config_err(format!("{source}: {}", source::message(&e))))
+fn described(source: &ConfigSource, e: &SignalError) -> SignalError {
+    config_err(format!("{source}: {}", source::message(e)))
 }
 
 fn config_err(msg: impl Into<String>) -> SignalError {

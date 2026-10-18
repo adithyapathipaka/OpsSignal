@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "opssignal-aws"
 version = "0.1.0"
-description = "AWS config support for opssignal (S3 and AppConfig)"
+description = "AWS support for opssignal (S3, AppConfig, DynamoDB, Secrets Manager)"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 classifiers = [

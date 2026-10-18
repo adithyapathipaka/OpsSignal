@@ -8,6 +8,7 @@ pub mod delivery;
 pub mod providers;
 mod reload;
 pub mod routing;
+pub mod secrets;
 pub mod signal;
 pub mod sink;
 pub mod source;

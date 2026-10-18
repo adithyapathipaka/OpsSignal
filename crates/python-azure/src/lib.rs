@@ -1,5 +1,6 @@
 //! The `opssignal-azure` add-on: lets the base `opssignal` Python
-//! package read configs from Azure Blob Storage and App Configuration (az:// and azappconfig://). The base package
+//! package read configs from Azure (az://, azappconfig://, cosmos://) and
+//! Key Vault placeholders (`${azure-kv:...}`). The base package
 //! looks for this module when it builds its client and sends every
 //! fetch for those schemes to [`fetch`]; all the logic is in
 //! `opssignal-core`, compiled here with its `azure` feature.

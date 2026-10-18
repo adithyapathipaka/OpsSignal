@@ -31,13 +31,14 @@ async-trait = "0.1"
 object_store = { version = "0.14", default-features = false, optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
 
 [features]
 default = []
 # SIGNAL_CONFIG=s3://bucket/key
 aws = ["object-store", "object_store/aws-base"]
 # SIGNAL_CONFIG=gs://bucket/object
-gcp = ["object-store", "object_store/gcp-base"]
+gcp = ["object-store", "object_store/gcp-base", "dep:base64"]
 # SIGNAL_CONFIG=az://container/blob
 azure = ["object-store", "object_store/azure-base"]
 object-store = ["dep:object_store", "object_store/ring", "dep:bytes", "dep:http"]

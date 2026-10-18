@@ -1,4 +1,5 @@
-//! Google Cloud: GCS objects and Firestore documents.
+//! Google Cloud: GCS objects, Firestore documents and Secret Manager
+//! secrets.
 //!
 //! Credentials come from object_store's GCP chain:
 //! `GOOGLE_SERVICE_ACCOUNT` / `GOOGLE_APPLICATION_CREDENTIALS`, gcloud
@@ -6,8 +7,9 @@
 //! workload identity, GCE service accounts). Its tokens carry the
 //! cloud-platform scope, which covers the other services too.
 
-use super::{client, config_err, fetch_object, status_err, ReqwestConnector};
+use super::{check_endpoint, client, config_err, fetch_object, status_err, ReqwestConnector};
 use crate::signal::SignalError;
+use base64::Engine;
 use object_store::gcp::GoogleCloudStorageBuilder;
 
 pub(crate) async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
@@ -91,4 +93,46 @@ pub(crate) async fn fetch_firestore(
                 "document '{document}' has no string field '{field}' holding the config"
             ))
         })
+}
+
+/// Reads one secret version (`latest` unless pinned). Honours
+/// `GOOGLE_SECRET_MANAGER_ENDPOINT` for regional endpoints and emulators.
+pub(crate) async fn fetch_secret(
+    project: &str,
+    secret: &str,
+    version: &str,
+) -> Result<String, SignalError> {
+    let base = match std::env::var("GOOGLE_SECRET_MANAGER_ENDPOINT") {
+        Ok(url) => {
+            check_endpoint(&url)?;
+            url.trim_end_matches('/').to_string()
+        }
+        Err(_) => "https://secretmanager.googleapis.com".to_string(),
+    };
+    let mut url = reqwest::Url::parse(&base).map_err(|e| config_err(e.to_string()))?;
+    url.path_segments_mut()
+        .map_err(|_| config_err(format!("{base} cannot be a base URL")))?
+        .extend(["v1", "projects", project, "secrets", secret, "versions"])
+        .push(&format!("{version}:access"));
+    let resp = client()?
+        .get(url)
+        .bearer_auth(token().await?)
+        .send()
+        .await
+        .map_err(|e| config_err(e.to_string()))?;
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| config_err(e.to_string()))?;
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    let body: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| config_err(format!("unexpected Secret Manager response: {e}")))?;
+    let data = body
+        .pointer("/payload/data")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| config_err("Secret Manager sent no payload"))?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| config_err(format!("Secret Manager payload is not base64: {e}")))?;
+    String::from_utf8(raw).map_err(|_| config_err("the secret is not valid UTF-8"))
 }
