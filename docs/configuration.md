@@ -235,7 +235,7 @@ than once, such as a default that every team extends, is loaded once.
 
 | Section | How it merges |
 |---|---|
-| `providers` | By name. A later file's `slack`, `webhook` or `console` replaces the earlier one whole. |
+| `providers` | By name. A later file's `slack`, `webhook`, `pagerduty`, `teams` or `console` replaces the earlier one whole. |
 | `routes` | Added together. A later file's routes go first, so the more specific file is matched first and its providers are tried first, while the inherited routes still catch everything else. |
 | `storage` | Taken from the last file that sets it. |
 
@@ -299,6 +299,11 @@ storage:
 | `console` | `enabled` (optional) | Always registered, because it is the routing fallback. It cannot be turned off. |
 | `slack` | `webhook_url` | Slack incoming-webhook URL. |
 | `webhook` | `url` | Receives the full signal as a JSON `POST`. |
+| `pagerduty` | `routing_key`, `url` (optional) | Triggers a PagerDuty alert through the Events API v2. `url` defaults to the US endpoint; EU accounts set `https://events.eu.pagerduty.com/v2/enqueue`. |
+| `teams` | `webhook_url` | Microsoft Teams Workflows (or legacy incoming) webhook URL. Posts an Adaptive Card. |
+
+[Providers](providers.md) describes what each one sends and how to get its
+URL or key.
 
 Unknown provider keys are rejected, so a typo such as `slak:` fails at load
 time instead of silently dropping a provider.
