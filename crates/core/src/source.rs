@@ -432,8 +432,9 @@ fn missing_support(scheme: &str) -> String {
         _ => ("azure", "azure"),
     };
     format!(
-        "this build cannot read {scheme}:// configs; install the add-on \
-         (pip install 'opssignal[{extra}]') or enable the `{feature}` cargo feature of opssignal-core"
+        "this build cannot read {scheme}:// configs; install the {extra} add-on: \
+         pip install 'opssignal[{extra}]' for Python, a CLI or C library built with \
+         `--features {extra}`, or the `{feature}` cargo feature of opssignal-core"
     )
 }
 

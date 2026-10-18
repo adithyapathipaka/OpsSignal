@@ -159,7 +159,9 @@ mode is worse than not having the SDK at all. This is enforced in
 light. They run on the same reqwest/rustls stack as the providers rather than
 pulling in a second one.
 
-The CLI and the C library compile all three in. The Python wheel compiles none:
+Cloud code ships only in cloud packages. The base CLI and C library compile
+none of it; their `aws`, `gcp`, `azure` and `all` features build a variant
+that is the base plus that cloud. The Python wheel compiles none either:
 each cloud ships as its own wheel (`crates/python-aws`, `-gcp`, `-azure`),
 installed through the `opssignal[aws]`, `[gcp]` and `[azure]` extras, because
 pip extras can add packages but cannot change what is compiled into one. At

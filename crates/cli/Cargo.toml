@@ -14,9 +14,11 @@ opssignal-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 
 [features]
-# Shipped builds can read SIGNAL_CONFIG from S3, GCS and Azure. Build with
-# --no-default-features for a smaller binary that reads files and https only.
-default = ["s3", "gcs", "azure"]
-s3 = ["opssignal-core/s3"]
-gcs = ["opssignal-core/gcs"]
+# The base CLI reads local files and https:// only. Each cloud is an
+# add-on on top of it, matching the pip extras: build with --features aws,
+# gcp, azure or all.
+default = []
+aws = ["opssignal-core/s3"]
+gcp = ["opssignal-core/gcs"]
 azure = ["opssignal-core/azure"]
+all = ["aws", "gcp", "azure"]
