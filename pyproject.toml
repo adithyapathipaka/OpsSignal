@@ -1,0 +1,46 @@
+[project]
+name = "opssignal-dev"
+version = "0.0.0"
+requires-python = ">=3.10"
+# This is the repo-level dev environment, not the publishable SDK package.
+# The installable SDK lives in python/pyproject.toml (maturin + pyo3).
+dependencies = []
+
+[tool.uv]
+dev-dependencies = [
+    # Build
+    "maturin>=1.5,<2.0",
+    # Testing
+    "pytest>=7",
+    # Lint + format
+    "ruff>=0.4",
+    # Security
+    "bandit>=1.7",
+    "graphifyy==0.9.6",
+    "ast-grep-cli==0.44.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "S",   # flake8-bandit (security)
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "S101", # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"python/tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

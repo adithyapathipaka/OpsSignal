@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/ffi",
+    "crates/python",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/adithyapathipaka/OpsSignal"
+rust-version = "1.75"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "unwind"  # required: FFI boundary uses catch_unwind, must not abort
