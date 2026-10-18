@@ -18,7 +18,10 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 
 use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
-use providers::{console::ConsoleProvider, slack::SlackProvider, webhook::WebhookProvider};
+use providers::{
+    console::ConsoleProvider, pagerduty::PagerDutyProvider, slack::SlackProvider,
+    teams::TeamsProvider, webhook::WebhookProvider,
+};
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
 use sink::{SignalSink, SqliteSink};
@@ -51,6 +54,21 @@ impl Pipeline {
             providers.insert(
                 "webhook".to_string(),
                 Arc::new(WebhookProvider::new(webhook.url.clone())),
+            );
+        }
+        if let Some(pagerduty) = &config.providers.pagerduty {
+            providers.insert(
+                "pagerduty".to_string(),
+                Arc::new(PagerDutyProvider::new(
+                    pagerduty.routing_key.clone(),
+                    pagerduty.url.clone(),
+                )),
+            );
+        }
+        if let Some(teams) = &config.providers.teams {
+            providers.insert(
+                "teams".to_string(),
+                Arc::new(TeamsProvider::new(teams.webhook_url.clone())),
             );
         }
         Pipeline {
@@ -261,7 +279,7 @@ async fn deliver(
 mod tests {
     use super::*;
     use crate::signal::Severity;
-    use wiremock::matchers::method;
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn temp_db() -> String {
@@ -642,6 +660,59 @@ mod tests {
         let mut names: Vec<&str> = pipeline.providers.keys().map(String::as_str).collect();
         names.sort_unstable();
         assert_eq!(names, vec!["console", "slack"]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn from_config_registers_pagerduty_and_teams() {
+        let db = temp_db();
+        let yaml = format!(
+            "providers:\n  pagerduty:\n    routing_key: k\n  teams:\n    webhook_url: \"https://example.test/t\"\nstorage:\n  path: \"{db}\"\n"
+        );
+        let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
+            .expect("client");
+
+        let pipeline = client.pipeline();
+        let mut names: Vec<&str> = pipeline.providers.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["console", "pagerduty", "teams"]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn failed_pagerduty_falls_back_to_teams() {
+        let server_rt = tokio::runtime::Runtime::new().expect("server runtime");
+        let server = server_rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/pd"))
+                .respond_with(ResponseTemplate::new(400))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/teams"))
+                .respond_with(ResponseTemplate::new(202))
+                .expect(1)
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let db = temp_db();
+        let uri = server.uri();
+        let yaml = format!(
+            "providers:\n  pagerduty:\n    routing_key: k\n    url: \"{uri}/pd\"\n  teams:\n    webhook_url: \"{uri}/teams\"\nroutes:\n  - match:\n      severity: [error]\n    providers: [pagerduty, teams]\nstorage:\n  path: \"{db}\"\n"
+        );
+        let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
+            .expect("client");
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(30))
+            .expect("notify_sync");
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("teams"));
+        server_rt.block_on(server.verify());
         let _ = std::fs::remove_file(&db);
     }
 

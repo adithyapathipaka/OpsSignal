@@ -18,6 +18,8 @@ flowchart LR
     B --> C[Console]
     B --> D[Slack]
     B --> E[Webhook]
+    B --> G[PagerDuty]
+    B --> H[Microsoft Teams]
     B -.-> F[(SQLite sink)]
 ```
 
@@ -38,6 +40,7 @@ notifications.
 
 - [Getting started](getting-started.md): install, send a first signal from Python or the CLI.
 - [Configuration](configuration.md): `signal.yaml`, providers, routes, storage.
+- [Providers](providers.md): Slack, Teams, PagerDuty, webhook and console.
 - [CLI](cli.md): flags and exit codes for shell and CI use.
 - [Architecture](ARCHITECTURE.md): components, delivery semantics, design rules.
 - [API reference](reference.md): generated Rust docs for `opssignal-core`.
@@ -46,8 +49,8 @@ notifications.
 
 | Version | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack providers, SQLite sink, Python bindings, Airflow adapter, CLI |
-| v0.2 | Dedup, retry/backoff tuning, Teams + Alertmanager providers |
+| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams providers, SQLite sink, Python bindings, Airflow adapter, CLI |
+| v0.2 | Dedup, retry/backoff tuning, Alertmanager provider |
 | v0.3 | Postgres sink |
 | v0.4 | dbt + Dagster adapters |
 | v0.5+ | Java/Go bindings, only if real external demand appears |

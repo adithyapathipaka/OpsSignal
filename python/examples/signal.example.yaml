@@ -12,6 +12,10 @@ providers:
     enabled: true
   slack:
     webhook_url: "${SLACK_WEBHOOK_URL}"
+  # pagerduty:
+  #   routing_key: "${PAGERDUTY_ROUTING_KEY}"
+  # teams:
+  #   webhook_url: "${TEAMS_WEBHOOK_URL}"
 
 routes:
   - match:
