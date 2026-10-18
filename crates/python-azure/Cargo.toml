@@ -1,0 +1,16 @@
+[package]
+name = "opssignal-py-azure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The opssignal-azure wheel, installed by `pip install 'opssignal[azure]'`.
+
+[lib]
+name = "_azure"
+crate-type = ["cdylib"]
+
+[dependencies]
+opssignal-core = { path = "../core", features = ["azure"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }

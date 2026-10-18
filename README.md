@@ -37,7 +37,8 @@ downstream of those, converting their events into notifications.
 ## Quickstart (Python / Airflow)
 
 ```bash
-pip install opssignal
+pip install opssignal            # local and https:// configs
+pip install 'opssignal[aws]'     # + s3:// (also [gcp], [azure], [all])
 ```
 
 ```python

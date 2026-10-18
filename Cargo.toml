@@ -4,6 +4,9 @@ members = [
     "crates/core",
     "crates/ffi",
     "crates/python",
+    "crates/python-aws",
+    "crates/python-gcp",
+    "crates/python-azure",
     "crates/cli",
 ]
 

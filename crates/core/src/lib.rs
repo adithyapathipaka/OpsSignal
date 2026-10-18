@@ -1,11 +1,17 @@
 #![forbid(unsafe_code)]
 
+mod chain;
+#[cfg(feature = "object-store")]
+mod cloud;
 pub mod config;
 pub mod delivery;
 pub mod providers;
+mod reload;
 pub mod routing;
+pub mod secrets;
 pub mod signal;
 pub mod sink;
+pub mod source;
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 200;
@@ -16,26 +22,23 @@ use providers::{console::ConsoleProvider, slack::SlackProvider, webhook::Webhook
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
 use sink::{SignalSink, SqliteSink};
+use source::{ConfigSource, LoadOptions};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-/// The assembled pipeline: validate -> persist + route happen off the
-/// same validated signal, in parallel conceptually, so a sink failure
-/// can never block delivery and vice versa (see architecture review,
-/// component diagram).
-pub struct SignalClient {
-    pub sink: Arc<dyn SignalSink>,
+/// The part of a client that a config reload replaces: the routing
+/// rules and the providers they name. Swapped as one unit, so a signal
+/// never sees new routes with old providers.
+pub struct Pipeline {
     pub routing: RoutingConfig,
     pub providers: HashMap<String, Arc<dyn Provider>>,
-    pub runtime: tokio::runtime::Runtime,
 }
 
-impl SignalClient {
-    /// Builds a client from a parsed `signal.yaml`: registers the
-    /// configured providers (console always), opens the sink, and
-    /// starts the runtime that delivery tasks run on.
-    pub fn from_config(config: &Config) -> Result<Self, SignalError> {
+impl Pipeline {
+    /// Registers the configured providers. `console` is always present
+    /// because routing falls back to it.
+    pub fn from_config(config: &Config) -> Self {
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
         providers.insert("console".to_string(), Arc::new(ConsoleProvider));
         if let Some(slack) = &config.providers.slack {
@@ -50,30 +53,94 @@ impl SignalClient {
                 Arc::new(WebhookProvider::new(webhook.url.clone())),
             );
         }
+        Pipeline {
+            routing: config.routing(),
+            providers,
+        }
+    }
+}
 
+type SharedPipeline = Arc<RwLock<Arc<Pipeline>>>;
+
+/// The assembled pipeline: validate -> persist + route happen off the
+/// same validated signal, in parallel conceptually, so a sink failure
+/// can never block delivery and vice versa (see architecture review,
+/// component diagram).
+pub struct SignalClient {
+    pub sink: Arc<dyn SignalSink>,
+    pipeline: SharedPipeline,
+    pub runtime: tokio::runtime::Runtime,
+}
+
+impl SignalClient {
+    /// Builds a client from a parsed `signal.yaml`: registers the
+    /// configured providers (console always), opens the sink, and
+    /// starts the runtime that delivery tasks run on. The config is
+    /// fixed for the client's lifetime; see [`SignalClient::from_source`]
+    /// for one that reloads.
+    pub fn from_config(config: &Config) -> Result<Self, SignalError> {
+        Self::with_runtime(config, build_runtime()?)
+    }
+
+    /// Loads the config from `source` and, if `opts.refresh` is set,
+    /// keeps re-reading it in the background and applies changes
+    /// without a restart. A reload that fails to fetch or parse keeps
+    /// the current config, so a bad edit can't take alerting down.
+    pub fn from_source(source: &ConfigSource, opts: &LoadOptions) -> Result<Self, SignalError> {
+        Self::from_sources(std::slice::from_ref(source), opts)
+    }
+
+    /// [`SignalClient::from_source`] for a layered config: `sources`
+    /// are merged lowest priority first, along with every file they
+    /// `extends`, and any of them changing triggers a reload.
+    pub fn from_sources(sources: &[ConfigSource], opts: &LoadOptions) -> Result<Self, SignalError> {
+        let runtime = build_runtime()?;
+        let loaded = runtime.block_on(source::load_initial(sources, opts))?;
+        let client = Self::with_runtime(&loaded.config, runtime)?;
+        if let Some(every) = opts.refresh {
+            reload::spawn(
+                &client.runtime,
+                reload::Reloader {
+                    roots: sources.to_vec(),
+                    opts: opts.clone(),
+                    every,
+                    last_texts: loaded.texts,
+                    storage: loaded.config.storage.clone(),
+                    pipeline: Arc::clone(&client.pipeline),
+                },
+            );
+        }
+        Ok(client)
+    }
+
+    /// The discovered config (`$SIGNAL_CONFIG`, then `./signal.yaml`,
+    /// then the zero-config default), reloaded on the interval in
+    /// `$SIGNAL_CONFIG_REFRESH_SECS`.
+    pub fn from_env() -> Result<Self, SignalError> {
+        let opts = LoadOptions::from_env()?;
+        match ConfigSource::discover()? {
+            Some(sources) => Self::from_sources(&sources, &opts),
+            None => Self::from_config(&Config::default()),
+        }
+    }
+
+    fn with_runtime(
+        config: &Config,
+        runtime: tokio::runtime::Runtime,
+    ) -> Result<Self, SignalError> {
         let sink: Arc<dyn SignalSink> = match config.storage.sink {
             SinkKind::Sqlite => Arc::new(SqliteSink::open(&config.storage.path)?),
         };
-
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("opssignal")
-            .enable_all()
-            .build()
-            .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?;
-
         Ok(SignalClient {
             sink,
-            routing: config.routing(),
-            providers,
+            pipeline: Arc::new(RwLock::new(Arc::new(Pipeline::from_config(config)))),
             runtime,
         })
     }
 
-    /// `from_config` on the discovered config: `$SIGNAL_CONFIG`, then
-    /// `./signal.yaml`, then the zero-config default.
-    pub fn from_env() -> Result<Self, SignalError> {
-        Self::from_config(&Config::discover()?)
+    /// The routing rules and providers currently in effect.
+    pub fn pipeline(&self) -> Arc<Pipeline> {
+        current(&self.pipeline)
     }
 
     /// Fire-and-forget. Never blocks the caller beyond spawning the
@@ -87,11 +154,10 @@ impl SignalClient {
         }
         let signal = Signal::from_input(input);
         let sink = Arc::clone(&self.sink);
-        let routing = self.routing.clone();
-        let providers = self.providers.clone();
+        let pipeline = self.pipeline();
 
         self.runtime.spawn(async move {
-            let result = deliver(&signal, &routing, &providers).await;
+            let result = deliver(&signal, &pipeline.routing, &pipeline.providers).await;
             if let Err(e) = sink.write(&signal, &result) {
                 tracing::error!("sink write failed: {e}");
             }
@@ -109,23 +175,40 @@ impl SignalClient {
     ) -> Result<DeliveryResult, SignalError> {
         signal::validate(&input)?;
         let signal = Signal::from_input(input);
-        let routing = self.routing.clone();
-        let providers = self.providers.clone();
+        let pipeline = self.pipeline();
 
         let result = self.runtime.block_on(async {
-            tokio::time::timeout(timeout, deliver(&signal, &routing, &providers))
-                .await
-                .unwrap_or_else(|_| DeliveryResult {
-                    status: DeliveryStatus::Failed,
-                    provider: None,
-                    error: Some(format!("timed out after {timeout:?}")),
-                    attempts: 0,
-                })
+            tokio::time::timeout(
+                timeout,
+                deliver(&signal, &pipeline.routing, &pipeline.providers),
+            )
+            .await
+            .unwrap_or_else(|_| DeliveryResult {
+                status: DeliveryStatus::Failed,
+                provider: None,
+                error: Some(format!("timed out after {timeout:?}")),
+                attempts: 0,
+            })
         });
 
         self.sink.write(&signal, &result)?;
         Ok(result)
     }
+}
+
+fn build_runtime() -> Result<tokio::runtime::Runtime, SignalError> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("opssignal")
+        .enable_all()
+        .build()
+        .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))
+}
+
+/// A poisoned lock only means a reload panicked mid-swap; the value
+/// inside is still a complete pipeline, so keep using it.
+fn current(pipeline: &SharedPipeline) -> Arc<Pipeline> {
+    Arc::clone(&pipeline.read().unwrap_or_else(|e| e.into_inner()))
 }
 
 async fn deliver(
@@ -463,8 +546,10 @@ mod tests {
     fn client_with(providers: Vec<Arc<dyn Provider>>, route: &[&str], db: &str) -> SignalClient {
         SignalClient {
             sink: Arc::new(SqliteSink::open(db).expect("open sink")),
-            routing: routing_to(route),
-            providers: registry(providers),
+            pipeline: Arc::new(RwLock::new(Arc::new(Pipeline {
+                routing: routing_to(route),
+                providers: registry(providers),
+            }))),
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -553,7 +638,8 @@ mod tests {
         let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
             .expect("client");
 
-        let mut names: Vec<&str> = client.providers.keys().map(String::as_str).collect();
+        let pipeline = client.pipeline();
+        let mut names: Vec<&str> = pipeline.providers.keys().map(String::as_str).collect();
         names.sort_unstable();
         assert_eq!(names, vec!["console", "slack"]);
         let _ = std::fs::remove_file(&db);

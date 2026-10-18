@@ -6,19 +6,57 @@
 //! things fail."
 
 use opssignal_core::signal::{Severity, SignalInput};
+use opssignal_core::source::{register_cloud_fetcher, ExternalFetcher};
 use opssignal_core::SignalClient;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Process-global client, built from signal.yaml on the first notify()
 /// call. A config error is cached too, so every later call raises the
 /// same error instead of re-reading a broken file on each alert.
 static CLIENT: OnceLock<Result<SignalClient, String>> = OnceLock::new();
 
-fn client() -> PyResult<&'static SignalClient> {
-    CLIENT
-        .get_or_init(|| SignalClient::from_env().map_err(|e| e.to_string()))
+/// Cloud add-ons installed as pip extras. Each serves every URL scheme
+/// of its cloud (see `opssignal_core::source::CLOUD_SCHEMES`).
+const ADDONS: [(&str, &str); 3] = [
+    ("aws", "opssignal_aws"),
+    ("gcp", "opssignal_gcp"),
+    ("azure", "opssignal_azure"),
+];
+
+/// Hands a core fetch request to an add-on's `fetch(url) -> str`.
+struct AddonFetcher(Py<PyAny>);
+
+impl ExternalFetcher for AddonFetcher {
+    fn fetch(&self, url: &str) -> Result<String, String> {
+        // try_attach: a reload can fire while the interpreter exits.
+        Python::try_attach(|py| {
+            self.0
+                .call1(py, (url,))
+                .and_then(|text| text.extract::<String>(py))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap_or_else(|| Err("the Python interpreter is shutting down".to_string()))
+    }
+}
+
+fn register_addons(py: Python<'_>) {
+    for (cloud, module) in ADDONS {
+        if let Ok(fetch) = py.import(module).and_then(|m| m.getattr("fetch")) {
+            register_cloud_fetcher(cloud, Arc::new(AddonFetcher(fetch.unbind())));
+        }
+    }
+}
+
+fn client(py: Python<'_>) -> PyResult<&'static SignalClient> {
+    if CLIENT.get().is_none() {
+        register_addons(py);
+    }
+    // Detached: loading the config may call an add-on, which needs the
+    // GIL from another thread, and a second Python thread waiting here
+    // must not hold it either.
+    py.detach(|| CLIENT.get_or_init(|| SignalClient::from_env().map_err(|e| e.to_string())))
         .as_ref()
         .map_err(|e| PyRuntimeError::new_err(format!("opssignal is not configured: {e}")))
 }
@@ -33,6 +71,7 @@ fn client() -> PyResult<&'static SignalClient> {
 #[pyfunction]
 #[pyo3(signature = (source, event_type, title, severity="info", message=None, environment=None))]
 fn notify(
+    py: Python<'_>,
     source: String,
     event_type: String,
     title: String,
@@ -58,7 +97,7 @@ fn notify(
     opssignal_core::signal::validate(&input)
         .map_err(|e| PyValueError::new_err(format!("invalid signal: {e}")))?;
 
-    client()?.notify_async(input);
+    client(py)?.notify_async(input);
     Ok(())
 }
 

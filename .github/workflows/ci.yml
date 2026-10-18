@@ -26,6 +26,25 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # The workspace build turns on the cloud add-ons' features; check
+      # that core still builds and passes without them.
+      - name: Core without cloud features
+        run: |
+          cargo clippy -p opssignal-core --all-targets -- -D warnings
+          cargo test -p opssignal-core
+      # Cloud code ships only in cloud builds: the base CLI and C library
+      # must not link object_store, and each cloud variant must build.
+      - name: CLI and C library cloud variants
+        run: |
+          for crate in opssignal-cli opssignal-ffi; do
+            if cargo tree -p "$crate" -e normal --prefix none | grep -q '^object_store '; then
+              echo "::error::$crate pulls in cloud code without a cloud feature"
+              exit 1
+            fi
+            for feature in aws gcp azure; do
+              cargo clippy -p "$crate" --features "$feature" -- -D warnings
+            done
+          done
 
   rust-security:
     name: Rust security (cargo-audit, cargo-deny)
@@ -56,6 +75,11 @@ jobs:
         run: uv sync --dev
       - name: Build extension
         run: cd python && uv run --project .. maturin develop
+      # One add-on is enough to test the extras path end to end; the gcp
+      # and azure crates are compiled and linted in the Rust job, and
+      # their "install the extra" errors are tested here uninstalled.
+      - name: Build the opssignal-aws add-on
+        run: cd python/addons/aws && uv run --project ../../.. maturin develop
       - name: Run tests
         run: uv run pytest --tb=short -q
 
@@ -81,11 +105,11 @@ jobs:
       - name: Install dev tools
         run: uv sync --dev
       - name: ruff lint
-        run: uv run ruff check python/opssignal python/tests
+        run: uv run ruff check python/opssignal python/tests python/addons
       - name: ruff format check
-        run: uv run ruff format --check python/opssignal python/tests
+        run: uv run ruff format --check python/opssignal python/tests python/addons
       - name: bandit security scan
-        run: uv run bandit -r python/opssignal/ -ll
+        run: uv run bandit -r python/opssignal/ python/addons/ -ll
 
   claude-md-integrity:
     name: Check CLAUDE.md for hidden unicode

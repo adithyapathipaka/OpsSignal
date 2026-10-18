@@ -14,6 +14,13 @@ classifiers = [
     "Development Status :: 3 - Alpha",
 ]
 
+[project.optional-dependencies]
+# Each installs a native add-on that opssignal picks up on its own.
+aws = ["opssignal-aws==0.1.0"]    # SIGNAL_CONFIG=s3://bucket/key
+gcp = ["opssignal-gcp==0.1.0"]    # SIGNAL_CONFIG=gs://bucket/object
+azure = ["opssignal-azure==0.1.0"]  # SIGNAL_CONFIG=az://container/blob
+all = ["opssignal-aws==0.1.0", "opssignal-gcp==0.1.0", "opssignal-azure==0.1.0"]
+
 [tool.maturin]
 python-source = "."
 module-name = "opssignal._native"

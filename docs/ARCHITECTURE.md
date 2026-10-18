@@ -21,6 +21,7 @@ flowchart TB
     end
 
     subgraph core["crates/core (all business logic)"]
+        SRC["source + reload<br/>file / https / s3 / gs / az, cache, polling"]
         CFG["config<br/>signal.yaml + ${VAR} interpolation"]
         CLIENT["SignalClient<br/>owns a Tokio runtime"]
         VAL["signal<br/>validate, id, timestamp, dedup key"]
@@ -35,6 +36,7 @@ flowchart TB
     PYO3 --> CLIENT
     CLIC --> CLIENT
     FFI --> CLIENT
+    SRC --> CFG
     CFG --> CLIENT
     CLIENT --> VAL
     CLIENT --> ROUTE
@@ -148,6 +150,65 @@ provider names.
 A signal that matches no route must never silently disappear — that failure
 mode is worse than not having the SDK at all. This is enforced in
 `RoutingConfig::resolve`, not left to configuration.
+
+## Config sources and reload
+
+`SIGNAL_CONFIG` can name a local file, an `https://`, `s3://`, `gs://` or
+`az://` object, an AWS AppConfig profile (`appconfig://`), an Azure App
+Configuration key (`azappconfig://`), or one item of DynamoDB (`dynamodb://`),
+Firestore (`firestore://`) or Cosmos DB (`cosmos://`)
+(`crates/core/src/source.rs`). The cloud
+code lives in `crates/core/src/cloud/`, one module per cloud, and non-storage
+services are signed with the credentials object_store already resolves (SigV4
+on AWS; Entra tokens for the service's own audience on Azure), so no cloud SDK
+is in the tree. The cloud stores sit behind the
+`aws`, `gcp` and `azure` cargo features of `opssignal-core`, so the core stays
+light. They run on the same reqwest/rustls stack as the providers rather than
+pulling in a second one.
+
+Cloud code ships only in cloud packages. The base CLI and C library compile
+none of it; their `aws`, `gcp`, `azure` and `all` features build a variant
+that is the base plus that cloud. The Python wheel compiles none either:
+each cloud ships as its own wheel (`crates/python-aws`, `-gcp`, `-azure`),
+installed through the `opssignal[aws]`, `[gcp]` and `[azure]` extras, because
+pip extras can add packages but cannot change what is compiled into one. At
+startup the base binding imports whichever add-ons are installed and registers
+each one's `fetch` with the core for every scheme of its cloud
+(`source::register_cloud_fetcher`). The core calls
+it on a plain thread for that scheme, with the same cache and fallback rules.
+An add-on is a thin wrapper around `source::fetch_blocking`; it has no logic of
+its own.
+
+Two reliability rules shape this code:
+
+- **A config source is never a reason to lose a signal.** A remote source that
+  is unreachable or serves a broken file falls back to the last good cached
+  copy, then to the zero-config default (console only). The cache holds the
+  raw text before `${VAR}` substitution, so it never contains secrets.
+  `${aws-sm:...}`, `${gcp-sm:...}` and `${azure-kv:...}` placeholders are
+  resolved by `secrets.rs` after each file is fetched (values cached in memory
+  for `SIGNAL_SECRETS_TTL_SECS`); a store that can't be reached is handled
+  like an unreachable source.
+- **A reload is all or nothing.** `reload.rs` polls the source on an interval
+  (default 60 s) and, when the text or a fingerprint of its resolved secrets
+  changes and loads cleanly, swaps routes and
+  providers together as one `Pipeline` behind an `RwLock<Arc<_>>`. In-flight
+  deliveries keep the `Arc` they started with. A failed reload keeps the
+  current pipeline. The sink is never reopened live.
+
+A config can be layered: a file may `extends:` others, and `SIGNAL_CONFIG` may
+list several (`crates/core/src/chain.rs`). The chain is walked depth first
+into a list of files, lowest priority first, with each file loaded once,
+cycles rejected, and a depth (8) and file (64) limit. `Config::from_layers`
+merges it: providers by name, later routes first, `storage` from the last file
+that sets it. Routes are checked only after the merge. Each remote file is
+cached on its own, and the reloader re-walks the whole chain on every poll and
+compares the texts of every file, so a change to a shared default reaches all
+the teams that extend it. A remote file may not extend a local path.
+
+Polling is used instead of filesystem notifications because Kubernetes updates
+ConfigMap mounts by swapping a symlink, which file watchers often miss, and
+the same loop covers remote sources.
 
 ## FFI panic safety
 

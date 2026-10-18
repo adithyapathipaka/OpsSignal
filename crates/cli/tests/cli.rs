@@ -212,3 +212,12 @@ fn missing_required_argument_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--event-type"));
 }
+
+#[test]
+fn unsupported_config_url_exits_two() {
+    let dir = TempDir::new();
+    let out = run(&notify_args("ftp://example.test/signal.yaml", &[]), &dir);
+
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unsupported scheme"));
+}
