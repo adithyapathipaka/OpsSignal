@@ -1,5 +1,5 @@
-//! Azure App Configuration as a config source, against mock Entra ID
-//! and App Configuration endpoints.
+//! Azure App Configuration and Cosmos DB as config sources, against
+//! mock Entra ID and service endpoints.
 #![cfg(feature = "azure")]
 
 use opssignal_core::source::ConfigSource;
@@ -14,6 +14,12 @@ async fn app_configuration_uses_a_service_principal_token_and_etags() {
     let server = MockServer::start().await;
     std::env::set_var("AZURE_AUTHORITY_HOST", server.uri());
     std::env::set_var("AZURE_APPCONFIG_ENDPOINT", server.uri());
+    // A different audience from App Configuration's, and `{account}`
+    // filled in.
+    std::env::set_var(
+        "AZURE_COSMOS_ENDPOINT",
+        format!("{}/cosmos/{{account}}", server.uri()),
+    );
     std::env::set_var("AZURE_TENANT_ID", "tenant");
     std::env::set_var("AZURE_CLIENT_ID", "client");
     std::env::set_var("AZURE_CLIENT_SECRET", "secret");
@@ -26,8 +32,8 @@ async fn app_configuration_uses_a_service_principal_token_and_etags() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "access_token": "tok", "expires_in": 3600, "token_type": "Bearer"
         })))
-        // Cached for the second fetch.
-        .expect(1)
+        // One per service audience, then cached.
+        .expect(2)
         .mount(&server)
         .await;
     let kv = || {
@@ -67,4 +73,46 @@ async fn app_configuration_uses_a_service_principal_token_and_etags() {
             .contains("key 'missing' (no label) not found"),
         "{err}"
     );
+
+    cosmos_reads_an_item_with_an_entra_token(&server).await;
+}
+
+async fn cosmos_reads_an_item_with_an_entra_token(server: &MockServer) {
+    let item = |pk: &str| {
+        Mock::given(method("GET"))
+            .and(path("/cosmos/acct/dbs/ops/colls/routing/docs/payments"))
+            .and(header(
+                "authorization",
+                "type%3Daad%26ver%3D1.0%26sig%3Dtok",
+            ))
+            .and(header("x-ms-documentdb-partitionkey", pk))
+            .and(header("x-ms-version", "2018-12-31"))
+    };
+    item("[\"payments\"]")
+        .and(header("if-none-match", "\"0b00\""))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(server)
+        .await;
+    item("[\"payments\"]")
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "payments", "config": YAML, "_etag": "\"0b00\""
+        })))
+        .expect(1)
+        .mount(server)
+        .await;
+    // An explicit partition key value, and a custom property.
+    item("[\"team-a\"]")
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "payments", "yaml": "routes: []\n"
+        })))
+        .mount(server)
+        .await;
+
+    let source = ConfigSource::parse("cosmos://acct/ops/routing/payments").expect("valid source");
+    assert_eq!(source.fetch().await.expect("item"), YAML);
+    assert_eq!(source.fetch().await.expect("unchanged"), YAML);
+    let custom = ConfigSource::parse("cosmos://acct/ops/routing/payments?pk=team-a&field=yaml")
+        .expect("valid source");
+    assert_eq!(custom.fetch().await.expect("item"), "routes: []\n");
 }

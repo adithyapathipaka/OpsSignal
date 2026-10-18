@@ -1,4 +1,5 @@
-//! AWS: S3 objects and AppConfig configurations.
+//! AWS: S3 objects, AppConfig configurations, DynamoDB items and
+//! Secrets Manager secrets.
 //!
 //! Credentials come from object_store's AWS chain: static keys, web
 //! identity (EKS IRSA), ECS task roles and EC2 instance profiles. The
@@ -46,7 +47,7 @@ fn region() -> String {
 
 /// The service endpoint, honouring the SDKs' `AWS_ENDPOINT_URL_<SERVICE>`
 /// and `AWS_ENDPOINT_URL` overrides (LocalStack, VPC endpoints).
-fn endpoint(service_env: &str, host: &str) -> Result<String, SignalError> {
+fn endpoint(service_env: &str, host: &str, region: &str) -> Result<String, SignalError> {
     let custom = std::env::var(format!("AWS_ENDPOINT_URL_{service_env}"))
         .or_else(|_| std::env::var("AWS_ENDPOINT_URL"));
     match custom {
@@ -54,7 +55,7 @@ fn endpoint(service_env: &str, host: &str) -> Result<String, SignalError> {
             super::check_endpoint(&url)?;
             Ok(url.trim_end_matches('/').to_string())
         }
-        Err(_) => Ok(format!("https://{host}.{}.amazonaws.com", region())),
+        Err(_) => Ok(format!("https://{host}.{region}.amazonaws.com")),
     }
 }
 
@@ -64,16 +65,16 @@ type Response = (
     bytes::Bytes,
 );
 
-/// A SigV4-signed call to `service`.
+/// A SigV4-signed call to `service` in `region`.
 async fn call(
     service: &str,
+    region: &str,
     method: http::Method,
     url: &str,
     headers: &[(&str, &str)],
     body: Vec<u8>,
 ) -> Result<Response, SignalError> {
     let credential = credential().await?;
-    let region = region();
     let mut builder = http::Request::builder().method(method).uri(url);
     for (name, value) in headers {
         builder = builder.header(*name, *value);
@@ -81,7 +82,7 @@ async fn call(
     let mut request: HttpRequest = builder
         .body(HttpRequestBody::from(body))
         .map_err(|e| config_err(e.to_string()))?;
-    AwsAuthorizer::new(&credential, service, &region)
+    AwsAuthorizer::new(&credential, service, region)
         .try_authorize(&mut request, None)
         .map_err(|e| config_err(format!("cannot sign the request: {e}")))?;
     send(request).await
@@ -108,7 +109,7 @@ pub(crate) async fn fetch_appconfig(
     profile: &str,
 ) -> Result<String, SignalError> {
     let id = format!("{application}/{environment}/{profile}");
-    let base = endpoint("APPCONFIGDATA", "appconfigdata")?;
+    let base = endpoint("APPCONFIGDATA", "appconfigdata", &region())?;
     let previous = sessions()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -156,6 +157,7 @@ async fn start_session(
     });
     let (status, _, bytes) = call(
         "appconfig",
+        &region(),
         http::Method::POST,
         &format!("{base}/configurationsessions"),
         &[("content-type", "application/json")],
@@ -184,6 +186,7 @@ async fn latest(base: &str, token: &str) -> Result<(String, bytes::Bytes), Signa
         .append_pair("configuration_token", token);
     let (status, headers, bytes) = call(
         "appconfig",
+        &region(),
         http::Method::GET,
         url.as_str(),
         &[],
@@ -198,4 +201,88 @@ async fn latest(base: &str, token: &str) -> Result<(String, bytes::Bytes), Signa
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| config_err("AppConfig sent no Next-Poll-Configuration-Token"))?;
     Ok((next.to_string(), bytes))
+}
+
+/// Reads one item with `GetItem` (an eventually consistent read, half a
+/// read unit for an item under 4 KB).
+pub(crate) async fn fetch_dynamodb(
+    table: &str,
+    id: &str,
+    key: Option<&str>,
+    value: Option<&str>,
+) -> Result<String, SignalError> {
+    let (key, value) = (key.unwrap_or("id"), value.unwrap_or("config"));
+    let region = region();
+    let base = endpoint("DYNAMODB", "dynamodb", &region)?;
+    let body = serde_json::json!({
+        "TableName": table,
+        "Key": { key: { "S": id } },
+        "ProjectionExpression": "#v",
+        "ExpressionAttributeNames": { "#v": value },
+    });
+    let (status, _, bytes) = call(
+        "dynamodb",
+        &region,
+        http::Method::POST,
+        &format!("{base}/"),
+        &[
+            ("content-type", "application/x-amz-json-1.0"),
+            ("x-amz-target", "DynamoDB_20120810.GetItem"),
+        ],
+        body.to_string().into_bytes(),
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    let item: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| config_err(format!("unexpected DynamoDB response: {e}")))?;
+    let Some(item) = item.get("Item") else {
+        return Err(config_err(format!("no item with {key} = '{id}'")));
+    };
+    item.get(value)
+        .and_then(|v| v.get("S"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            config_err(format!(
+                "item '{id}' has no string attribute '{value}' holding the config"
+            ))
+        })
+}
+
+/// Reads the current version of a secret with `GetSecretValue`. A full
+/// ARN is read in its own region, so one config can name secrets from
+/// several regions.
+pub(crate) async fn fetch_secret(id: &str) -> Result<String, SignalError> {
+    let region = match id.split(':').collect::<Vec<_>>().as_slice() {
+        ["arn", _, "secretsmanager", region, ..] if !region.is_empty() => region.to_string(),
+        _ => region(),
+    };
+    let base = endpoint("SECRETSMANAGER", "secretsmanager", &region)?;
+    let body = serde_json::json!({ "SecretId": id });
+    let (status, _, bytes) = call(
+        "secretsmanager",
+        &region,
+        http::Method::POST,
+        &format!("{base}/"),
+        &[
+            ("content-type", "application/x-amz-json-1.1"),
+            ("x-amz-target", "secretsmanager.GetSecretValue"),
+        ],
+        body.to_string().into_bytes(),
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Secret {
+        secret_string: Option<String>,
+    }
+    serde_json::from_slice::<Secret>(&bytes)
+        .map_err(|e| config_err(format!("unexpected Secrets Manager response: {e}")))?
+        .secret_string
+        .ok_or_else(|| config_err("the secret is binary; store it as a string"))
 }

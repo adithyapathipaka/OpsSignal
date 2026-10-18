@@ -98,8 +98,12 @@ logged and ignored, and the previous routes stay in place.
 Two kinds of change still need a rollout (`kubectl rollout restart
 deployment/my-service`):
 
-- **Secrets.** Environment variables are fixed when a container starts, so a
-  rotated Slack URL in the Secret reaches a pod only after it restarts.
+- **Secrets held in environment variables.** Environment variables are fixed
+  when a container starts, so a rotated Slack URL in the Secret reaches a pod
+  only after it restarts. A `${aws-sm:...}`, `${gcp-sm:...}` or
+  `${azure-kv:...}` placeholder reads the secret store directly and picks up a
+  rotation on its own (see
+  [Secrets from a secret store](configuration.md#secrets-from-a-secret-store)).
 - **`storage` settings**, which are never reloaded live.
 
 ## Rolling it out to every app

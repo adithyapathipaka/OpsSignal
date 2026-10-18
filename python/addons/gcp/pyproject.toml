@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "opssignal-gcp"
 version = "0.1.0"
-description = "Google Cloud Storage config support for opssignal (SIGNAL_CONFIG=gs://...)"
+description = "Google Cloud support for opssignal (Cloud Storage, Firestore, Secret Manager)"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 classifiers = [
