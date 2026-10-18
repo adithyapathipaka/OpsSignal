@@ -12,3 +12,13 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 opssignal-core = { path = "../core" }
 serde_json = "1"
+
+[features]
+# The base C library reads local files and https:// only. Each cloud is an
+# add-on on top of it, matching the pip extras: build with --features aws,
+# gcp, azure or all.
+default = []
+aws = ["opssignal-core/aws"]
+gcp = ["opssignal-core/gcp"]
+azure = ["opssignal-core/azure"]
+all = ["aws", "gcp", "azure"]

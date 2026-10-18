@@ -12,3 +12,13 @@ path = "src/main.rs"
 [dependencies]
 opssignal-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
+
+[features]
+# The base CLI reads local files and https:// only. Each cloud is an
+# add-on on top of it, matching the pip extras: build with --features aws,
+# gcp, azure or all.
+default = []
+aws = ["opssignal-core/aws"]
+gcp = ["opssignal-core/gcp"]
+azure = ["opssignal-core/azure"]
+all = ["aws", "gcp", "azure"]

@@ -10,18 +10,38 @@ name = "opssignal_core"
 crate-type = ["lib"]
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "net", "fs", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 sha2 = "0.10"
 tracing = "0.1"
 async-trait = "0.1"
+# Cloud config sources. object_store's own `aws`/`gcp` features pull in
+# reqwest 0.13 and aws-lc-rs, a second HTTP and TLS stack; the `-base`
+# features plus `ring` let it run on the reqwest 0.12 client already in
+# the tree (see source.rs). Releases before 0.14 depend on a quick-xml
+# with open RustSec advisories.
+object_store = { version = "0.14", default-features = false, optional = true }
+bytes = { version = "1", optional = true }
+http = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+
+[features]
+default = []
+# SIGNAL_CONFIG=s3://bucket/key
+aws = ["object-store", "object_store/aws-base"]
+# SIGNAL_CONFIG=gs://bucket/object
+gcp = ["object-store", "object_store/gcp-base", "dep:base64"]
+# SIGNAL_CONFIG=az://container/blob
+azure = ["object-store", "object_store/azure-base"]
+object-store = ["dep:object_store", "object_store/ring", "dep:bytes", "dep:http"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

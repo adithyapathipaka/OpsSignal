@@ -8,6 +8,10 @@ Install the package (it ships a compiled Rust extension):
 pip install opssignal
 ```
 
+To load `signal.yaml` from a cloud bucket, add the matching extra:
+`opssignal[aws]`, `opssignal[gcp]` or `opssignal[azure]` (see
+[Installing cloud support](configuration.md#installing-cloud-support)).
+
 !!! note
     The package is not published to PyPI yet. Until it is, build it from a
     checkout with `uv sync --dev && (cd python && uv run --project .. maturin develop)`.
