@@ -1,0 +1,16 @@
+[package]
+name = "opssignal-py-gcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The opssignal-gcp wheel, installed by `pip install 'opssignal[gcp]'`.
+
+[lib]
+name = "_gcp"
+crate-type = ["cdylib"]
+
+[dependencies]
+opssignal-core = { path = "../core", features = ["gcs"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }

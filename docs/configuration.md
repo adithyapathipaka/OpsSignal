@@ -10,9 +10,9 @@ OpsSignal looks for its config in this order:
     |---|---|---|
     | `/etc/opssignal/signal.yaml` | local file | Must exist, or loading fails. |
     | `https://config.example.com/signal.yaml` | HTTPS `GET` | Plain `http://` is accepted only for `localhost`. |
-    | `s3://bucket/path/signal.yaml` | Amazon S3 (or any S3-compatible store) | Needs the `s3` build feature. |
-    | `gs://bucket/path/signal.yaml` | Google Cloud Storage | Needs the `gcs` build feature. |
-    | `az://container/path/signal.yaml` | Azure Blob Storage | Needs the `azure` build feature. Set `AZURE_STORAGE_ACCOUNT_NAME` to the storage account. |
+    | `s3://bucket/path/signal.yaml` | Amazon S3 (or any S3-compatible store) | Python: `opssignal[aws]`. |
+    | `gs://bucket/path/signal.yaml` | Google Cloud Storage | Python: `opssignal[gcp]`. |
+    | `az://container/path/signal.yaml` | Azure Blob Storage | Python: `opssignal[azure]`. Set `AZURE_STORAGE_ACCOUNT_NAME` to the storage account. |
 
 2. `./signal.yaml` in the current working directory.
 3. Nothing found: the zero-config default (console provider, SQLite sink at
@@ -20,8 +20,24 @@ OpsSignal looks for its config in this order:
 
 The CLI also accepts `--config <path or URL>`, which overrides both.
 
-The Python wheel, the CLI and the C library are built with S3, GCS and Azure
-support. If you depend on the `opssignal-core` crate directly, turn it on with
+### Installing cloud support
+
+`pip install opssignal` reads local files and HTTPS only. Each cloud is a pip
+extra that installs a small native add-on, which `opssignal` finds on its own:
+
+| Install | Adds |
+|---|---|
+| `pip install 'opssignal[aws]'` | `s3://` |
+| `pip install 'opssignal[gcp]'` | `gs://` |
+| `pip install 'opssignal[azure]'` | `az://` |
+| `pip install 'opssignal[all]'` | all three |
+
+If `SIGNAL_CONFIG` names a cloud whose extra isn't installed, the first
+`notify()` raises `RuntimeError` naming the extra to install. That is treated
+as a setup mistake, so it fails straight away instead of falling back.
+
+The CLI and the C library are built with all three clouds. If you depend on
+the `opssignal-core` crate directly, turn them on with
 `features = ["s3", "gcs", "azure"]`; without them the core reads files and
 HTTPS only.
 
@@ -175,6 +191,8 @@ These all stop the config from loading, and the message says which rule failed:
 - `SIGNAL_CONFIG` pointing at a path that is not a file, or using an
   unsupported URL scheme
 - `SIGNAL_CONFIG_REFRESH_SECS` that is not a whole number
+- a cloud URL whose support isn't installed (see
+  [Installing cloud support](#installing-cloud-support))
 
 A remote source that can't be fetched is not on this list: it falls back as
 described in [Remote configs](#remote-configs).

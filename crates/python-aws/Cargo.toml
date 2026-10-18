@@ -1,0 +1,16 @@
+[package]
+name = "opssignal-py-aws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The opssignal-aws wheel, installed by `pip install 'opssignal[aws]'`.
+
+[lib]
+name = "_aws"
+crate-type = ["cdylib"]
+
+[dependencies]
+opssignal-core = { path = "../core", features = ["s3"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }

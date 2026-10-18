@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "opssignal-aws"
+version = "0.1.0"
+description = "AWS S3 config support for opssignal (SIGNAL_CONFIG=s3://...)"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Development Status :: 3 - Alpha",
+]
+
+[tool.maturin]
+python-source = "."
+module-name = "opssignal_aws._aws"
+manifest-path = "../../../crates/python-aws/Cargo.toml"

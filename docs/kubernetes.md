@@ -122,7 +122,8 @@ env:
 ```
 
 On AKS the equivalent is `SIGNAL_CONFIG=az://ops-config/prod/signal.yaml`
-with `AZURE_STORAGE_ACCOUNT_NAME` set to the storage account.
+with `AZURE_STORAGE_ACCOUNT_NAME` set to the storage account. Python images
+need the matching extra, such as `pip install 'opssignal[aws]'`.
 
 Give the pod's service account read access to that object through IRSA on EKS,
 or workload identity on GKE or AKS; no access keys are needed. See

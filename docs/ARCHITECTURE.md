@@ -156,8 +156,18 @@ mode is worse than not having the SDK at all. This is enforced in
 `SIGNAL_CONFIG` can name a local file or an `https://`, `s3://`, `gs://` or
 `az://` object (`crates/core/src/source.rs`). The cloud stores sit behind the
 `s3`, `gcs` and `azure` cargo features of `opssignal-core`, so the core stays
-light; the bindings turn all three on. They run on the same reqwest/rustls stack as the providers rather than
+light. They run on the same reqwest/rustls stack as the providers rather than
 pulling in a second one.
+
+The CLI and the C library compile all three in. The Python wheel compiles none:
+each cloud ships as its own wheel (`crates/python-aws`, `-gcp`, `-azure`),
+installed through the `opssignal[aws]`, `[gcp]` and `[azure]` extras, because
+pip extras can add packages but cannot change what is compiled into one. At
+startup the base binding imports whichever add-ons are installed and registers
+each one's `fetch` with the core (`source::register_fetcher`). The core calls
+it on a plain thread for that scheme, with the same cache and fallback rules.
+An add-on is a thin wrapper around `source::fetch_blocking`; it has no logic of
+its own.
 
 Two reliability rules shape this code:
 

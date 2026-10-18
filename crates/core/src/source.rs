@@ -23,8 +23,10 @@
 use crate::config::{Config, CONFIG_ENV_VAR, DEFAULT_CONFIG_FILE};
 use crate::signal::SignalError;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 pub const REFRESH_ENV_VAR: &str = "SIGNAL_CONFIG_REFRESH_SECS";
@@ -126,12 +128,38 @@ impl ConfigSource {
         Ok(local.is_file().then_some(ConfigSource::File(local)))
     }
 
+    /// Whether this build can read the source at all, either natively
+    /// or through a registered [`ExternalFetcher`]. A missing one is an
+    /// install problem, not an outage, so it fails loudly instead of
+    /// falling back.
+    pub fn check_supported(&self) -> Result<(), SignalError> {
+        let (scheme, built_in) = match self {
+            ConfigSource::File(_) | ConfigSource::Http(_) => return Ok(()),
+            ConfigSource::S3 { .. } => ("s3", cfg!(feature = "s3")),
+            ConfigSource::Gcs { .. } => ("gs", cfg!(feature = "gcs")),
+            ConfigSource::Azure { .. } => ("az", cfg!(feature = "azure")),
+        };
+        if built_in || registered_fetcher(scheme).is_some() {
+            Ok(())
+        } else {
+            Err(config_err(format!("{self}: {}", missing_support(scheme))))
+        }
+    }
+
     pub fn is_remote(&self) -> bool {
         !matches!(self, ConfigSource::File(_))
     }
 
     /// Reads the raw (uninterpolated) config text from the source.
     pub async fn fetch(&self) -> Result<String, SignalError> {
+        self.fetch_unprefixed()
+            .await
+            .map_err(|e| config_err(format!("{self}: {}", strip_prefix(&e))))
+    }
+
+    /// [`ConfigSource::fetch`] without the source named in the error,
+    /// for add-ons whose caller adds it.
+    async fn fetch_unprefixed(&self) -> Result<String, SignalError> {
         match self {
             ConfigSource::File(path) => tokio::fs::read_to_string(path)
                 .await
@@ -141,7 +169,6 @@ impl ConfigSource {
             ConfigSource::Gcs { bucket, object } => fetch_gcs(bucket, object).await,
             ConfigSource::Azure { container, blob } => fetch_azure(container, blob).await,
         }
-        .map_err(|e| config_err(format!("{self}: {}", strip_prefix(&e))))
     }
 }
 
@@ -296,10 +323,8 @@ async fn fetch_s3(bucket: &str, key: &str) -> Result<String, SignalError> {
 }
 
 #[cfg(not(feature = "s3"))]
-async fn fetch_s3(_bucket: &str, _key: &str) -> Result<String, SignalError> {
-    Err(config_err(
-        "this build has no S3 support (enable the `s3` cargo feature of opssignal-core)",
-    ))
+async fn fetch_s3(bucket: &str, key: &str) -> Result<String, SignalError> {
+    fetch_external("s3", format!("s3://{bucket}/{key}")).await
 }
 
 #[cfg(feature = "gcs")]
@@ -316,10 +341,8 @@ async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
 }
 
 #[cfg(not(feature = "gcs"))]
-async fn fetch_gcs(_bucket: &str, _object: &str) -> Result<String, SignalError> {
-    Err(config_err(
-        "this build has no GCS support (enable the `gcs` cargo feature of opssignal-core)",
-    ))
+async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
+    fetch_external("gs", format!("gs://{bucket}/{object}")).await
 }
 
 #[cfg(feature = "azure")]
@@ -336,10 +359,96 @@ async fn fetch_azure(container: &str, blob: &str) -> Result<String, SignalError>
 }
 
 #[cfg(not(feature = "azure"))]
-async fn fetch_azure(_container: &str, _blob: &str) -> Result<String, SignalError> {
-    Err(config_err(
-        "this build has no Azure support (enable the `azure` cargo feature of opssignal-core)",
-    ))
+async fn fetch_azure(container: &str, blob: &str) -> Result<String, SignalError> {
+    fetch_external("az", format!("az://{container}/{blob}")).await
+}
+
+/// Reads one URL scheme for a build that was compiled without it.
+///
+/// Language bindings register these at runtime from add-on packages
+/// (the Python wheel ships local and HTTPS support only, and
+/// `pip install 'opssignal[aws]'` adds an S3 fetcher), so the base
+/// package stays small. Implementations may block; they run on their
+/// own thread and return the raw, uninterpolated file text.
+pub trait ExternalFetcher: Send + Sync {
+    fn fetch(&self, url: &str) -> Result<String, String>;
+}
+
+type FetcherRegistry = RwLock<HashMap<String, Arc<dyn ExternalFetcher>>>;
+
+fn fetchers() -> &'static FetcherRegistry {
+    static FETCHERS: OnceLock<FetcherRegistry> = OnceLock::new();
+    FETCHERS.get_or_init(Default::default)
+}
+
+/// Registers `fetcher` for `scheme` (`s3`, `gs` or `az`), replacing any
+/// earlier one. A scheme compiled into this build ignores it.
+pub fn register_fetcher(scheme: &str, fetcher: Arc<dyn ExternalFetcher>) {
+    fetchers()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(scheme.to_string(), fetcher);
+}
+
+fn registered_fetcher(scheme: &str) -> Option<Arc<dyn ExternalFetcher>> {
+    fetchers()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(scheme)
+        .cloned()
+}
+
+#[cfg_attr(
+    all(feature = "s3", feature = "gcs", feature = "azure"),
+    allow(dead_code)
+)]
+async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError> {
+    let fetcher = registered_fetcher(scheme).ok_or_else(|| config_err(missing_support(scheme)))?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // A plain thread rather than spawn_blocking: the fetcher may start
+    // its own runtime, which tokio forbids on its blocking pool.
+    std::thread::Builder::new()
+        .name("opssignal-fetch".into())
+        .spawn(move || {
+            let _ = tx.send(fetcher.fetch(&url));
+        })
+        .map_err(|e| config_err(format!("cannot start fetch thread: {e}")))?;
+    // The fetcher applies FETCH_TIMEOUT itself; this only guards
+    // against one that never returns.
+    match tokio::time::timeout(FETCH_TIMEOUT * 2, rx).await {
+        Ok(Ok(result)) => result.map_err(config_err),
+        Ok(Err(_)) => Err(config_err("the add-on fetcher failed without an answer")),
+        Err(_) => Err(config_err(format!(
+            "timed out after {:?}",
+            FETCH_TIMEOUT * 2
+        ))),
+    }
+}
+
+fn missing_support(scheme: &str) -> String {
+    let (extra, feature) = match scheme {
+        "s3" => ("aws", "s3"),
+        "gs" => ("gcp", "gcs"),
+        _ => ("azure", "azure"),
+    };
+    format!(
+        "this build cannot read {scheme}:// configs; install the add-on \
+         (pip install 'opssignal[{extra}]') or enable the `{feature}` cargo feature of opssignal-core"
+    )
+}
+
+/// Fetches the raw text at `url` on a throwaway runtime, with errors
+/// in the form an [`ExternalFetcher`] returns them. This is what add-on
+/// packages call to serve a request.
+pub fn fetch_blocking(url: &str) -> Result<String, String> {
+    let fetched = ConfigSource::parse(url).and_then(|source| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
+            .block_on(source.fetch_unprefixed())
+    });
+    fetched.map_err(|e| strip_prefix(&e))
 }
 
 /// How a client loads and refreshes its config.
@@ -424,6 +533,7 @@ pub(crate) async fn load_initial(
     source: &ConfigSource,
     opts: &LoadOptions,
 ) -> Result<Loaded, SignalError> {
+    source.check_supported()?;
     if !source.is_remote() {
         let text = source.fetch().await?;
         let config = parse(source, &text)?;
@@ -615,34 +725,59 @@ mod tests {
 
     #[cfg(not(feature = "s3"))]
     #[tokio::test]
-    async fn s3_without_the_feature_says_how_to_enable_it() {
-        let err = ConfigSource::parse("s3://b/k")
-            .expect("valid source")
-            .fetch()
-            .await
-            .expect_err("must be rejected");
+    async fn s3_without_the_feature_or_an_add_on_says_how_to_get_it() {
+        let source = ConfigSource::parse("s3://b/k").expect("valid source");
+        let err = source.check_supported().expect_err("unsupported");
+        assert!(err.to_string().contains("opssignal[aws]"));
         assert!(err.to_string().contains("`s3` cargo feature"));
+        let err = source.fetch().await.expect_err("must be rejected");
+        assert!(err.to_string().contains("opssignal[aws]"));
+    }
+
+    #[cfg(not(feature = "gcs"))]
+    struct Fixed(&'static str);
+
+    #[cfg(not(feature = "gcs"))]
+    impl ExternalFetcher for Fixed {
+        fn fetch(&self, url: &str) -> Result<String, String> {
+            Ok(format!("{}{url}", self.0))
+        }
+    }
+
+    #[cfg(not(feature = "azure"))]
+    struct Panics;
+
+    #[cfg(not(feature = "azure"))]
+    impl ExternalFetcher for Panics {
+        fn fetch(&self, _url: &str) -> Result<String, String> {
+            panic!("add-on bug")
+        }
     }
 
     #[cfg(not(feature = "gcs"))]
     #[tokio::test]
-    async fn gcs_without_the_feature_says_how_to_enable_it() {
-        let err = ConfigSource::parse("gs://b/k")
-            .expect("valid source")
-            .fetch()
-            .await
-            .expect_err("must be rejected");
-        assert!(err.to_string().contains("`gcs` cargo feature"));
+    async fn a_registered_add_on_serves_its_scheme() {
+        let source = ConfigSource::parse("gs://b/k.yaml").expect("valid source");
+        assert!(source.check_supported().is_err());
+
+        register_fetcher("gs", Arc::new(Fixed("fetched ")));
+
+        assert!(source.check_supported().is_ok());
+        assert_eq!(
+            source.fetch().await.expect("fetched"),
+            "fetched gs://b/k.yaml"
+        );
     }
 
     #[cfg(not(feature = "azure"))]
     #[tokio::test]
-    async fn azure_without_the_feature_says_how_to_enable_it() {
+    async fn a_panicking_add_on_is_a_fetch_error() {
+        register_fetcher("az", Arc::new(Panics));
         let err = ConfigSource::parse("az://c/k")
             .expect("valid source")
             .fetch()
             .await
-            .expect_err("must be rejected");
-        assert!(err.to_string().contains("`azure` cargo feature"));
+            .expect_err("must fail");
+        assert!(err.to_string().contains("without an answer"));
     }
 }

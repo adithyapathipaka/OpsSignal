@@ -62,6 +62,11 @@ jobs:
         run: uv sync --dev
       - name: Build extension
         run: cd python && uv run --project .. maturin develop
+      # One add-on is enough to test the extras path end to end; the gcp
+      # and azure crates are compiled and linted in the Rust job, and
+      # their "install the extra" errors are tested here uninstalled.
+      - name: Build the opssignal-aws add-on
+        run: cd python/addons/aws && uv run --project ../../.. maturin develop
       - name: Run tests
         run: uv run pytest --tb=short -q
 
@@ -87,11 +92,11 @@ jobs:
       - name: Install dev tools
         run: uv sync --dev
       - name: ruff lint
-        run: uv run ruff check python/opssignal python/tests
+        run: uv run ruff check python/opssignal python/tests python/addons
       - name: ruff format check
-        run: uv run ruff format --check python/opssignal python/tests
+        run: uv run ruff format --check python/opssignal python/tests python/addons
       - name: bandit security scan
-        run: uv run bandit -r python/opssignal/ -ll
+        run: uv run bandit -r python/opssignal/ python/addons/ -ll
 
   claude-md-integrity:
     name: Check CLAUDE.md for hidden unicode
