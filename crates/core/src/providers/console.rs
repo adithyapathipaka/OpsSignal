@@ -21,3 +21,24 @@ impl Provider for ConsoleProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::signal::SignalInput;
+
+    #[tokio::test]
+    async fn console_always_succeeds() {
+        let signal = Signal::from_input(SignalInput {
+            source: "x".into(),
+            event_type: "y".into(),
+            title: "z".into(),
+            ..Default::default()
+        });
+        assert_eq!(ConsoleProvider.name(), "console");
+        ConsoleProvider
+            .send(&signal)
+            .await
+            .expect("console never fails");
+    }
+}

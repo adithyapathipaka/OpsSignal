@@ -310,4 +310,97 @@ mod tests {
     fn unterminated_placeholder_is_rejected() {
         assert!(interpolate_str("${NOPE").is_err());
     }
+
+    #[test]
+    fn route_with_no_providers_is_rejected() {
+        let yaml = "routes:\n  - match:\n      severity: [error]\n    providers: []\n";
+        let err = Config::from_yaml_str(yaml).expect_err("empty provider list");
+        assert!(err.to_string().contains("routes[0] lists no providers"));
+    }
+
+    #[test]
+    fn unknown_top_level_key_is_rejected() {
+        assert!(Config::from_yaml_str("providerz: {}\n").is_err());
+    }
+
+    #[test]
+    fn unknown_sink_kind_is_rejected() {
+        assert!(Config::from_yaml_str("storage:\n  sink: postgres\n").is_err());
+    }
+
+    #[test]
+    fn invalid_yaml_is_a_config_error() {
+        let err = Config::from_yaml_str("routes: [unclosed\n").expect_err("bad YAML");
+        assert!(matches!(err, SignalError::Config(_)));
+        assert!(err.to_string().contains("invalid YAML"));
+    }
+
+    #[test]
+    fn empty_placeholder_is_rejected() {
+        assert!(interpolate_str("x${}y").is_err());
+    }
+
+    #[test]
+    fn text_without_placeholders_is_unchanged() {
+        assert_eq!(
+            interpolate_str("https://example.test/$5{x").expect("no placeholder"),
+            "https://example.test/$5{x"
+        );
+    }
+
+    #[test]
+    fn placeholders_inside_lists_are_interpolated() {
+        std::env::set_var("OPSSIGNAL_TEST_ENV_NAME", "prod");
+        let yaml = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match:\n      environment: \"${OPSSIGNAL_TEST_ENV_NAME}\"\n    providers: [webhook]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        assert_eq!(
+            config.routes[0].match_rule.environment.as_deref(),
+            Some("prod")
+        );
+    }
+
+    #[test]
+    fn provider_names_follow_configured_providers() {
+        let yaml = "providers:\n  webhook:\n    url: https://example.test\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        assert_eq!(config.provider_names(), vec!["console", "webhook"]);
+    }
+
+    #[test]
+    fn from_file_reports_the_path_on_error() {
+        let missing = std::env::temp_dir().join("opssignal-definitely-missing.yaml");
+        let err = Config::from_file(&missing).expect_err("missing file");
+        assert!(err
+            .to_string()
+            .contains("opssignal-definitely-missing.yaml"));
+
+        let bad = std::env::temp_dir().join(format!("opssignal-bad-{}.yaml", std::process::id()));
+        std::fs::write(&bad, "providers:\n  slak: {}\n").expect("write");
+        let err = Config::from_file(&bad).expect_err("bad file");
+        assert!(err.to_string().contains(&*bad.to_string_lossy()));
+        let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn discover_honours_signal_config_and_rejects_a_missing_file() {
+        // The only test that touches $SIGNAL_CONFIG, so it cannot race
+        // another test in this binary.
+        let path =
+            std::env::temp_dir().join(format!("opssignal-discover-{}.yaml", std::process::id()));
+        std::fs::write(&path, "storage:\n  path: /tmp/discovered.db\n").expect("write");
+
+        std::env::set_var(CONFIG_ENV_VAR, &path);
+        let found = Config::discover();
+        std::env::set_var(CONFIG_ENV_VAR, path.with_extension("missing"));
+        let missing = Config::discover();
+        std::env::remove_var(CONFIG_ENV_VAR);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            found.expect("discovered").storage.path,
+            "/tmp/discovered.db"
+        );
+        let err = missing.expect_err("missing $SIGNAL_CONFIG target");
+        assert!(err.to_string().contains("not a file"));
+    }
 }

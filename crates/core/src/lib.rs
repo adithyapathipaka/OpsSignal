@@ -262,4 +262,309 @@ mod tests {
         server_rt.block_on(server.verify());
         let _ = std::fs::remove_file(&db);
     }
+
+    /// A provider that fails its first `fail_times` sends, then succeeds,
+    /// counting every call so tests can assert on retry behaviour.
+    struct FlakyProvider {
+        name: &'static str,
+        fail_times: u32,
+        calls: std::sync::atomic::AtomicU32,
+    }
+
+    impl FlakyProvider {
+        fn new(name: &'static str, fail_times: u32) -> Arc<Self> {
+            Arc::new(FlakyProvider {
+                name,
+                fail_times,
+                calls: std::sync::atomic::AtomicU32::new(0),
+            })
+        }
+
+        fn calls(&self) -> u32 {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for FlakyProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        async fn send(&self, _signal: &Signal) -> Result<(), SignalError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if call <= self.fail_times {
+                Err(SignalError::Delivery(format!(
+                    "{} failure #{call}",
+                    self.name
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Never finishes within any reasonable timeout.
+    struct HangingProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for HangingProvider {
+        fn name(&self) -> &'static str {
+            "hanging"
+        }
+
+        async fn send(&self, _signal: &Signal) -> Result<(), SignalError> {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(())
+        }
+    }
+
+    fn routing_to(providers: &[&str]) -> RoutingConfig {
+        RoutingConfig {
+            routes: vec![routing::Route {
+                match_rule: routing::RouteMatch {
+                    severity: vec![],
+                    environment: None,
+                    source: None,
+                },
+                providers: providers.iter().map(|p| p.to_string()).collect(),
+            }],
+        }
+    }
+
+    fn registry(providers: Vec<Arc<dyn Provider>>) -> HashMap<String, Arc<dyn Provider>> {
+        providers
+            .into_iter()
+            .map(|p| (p.name().to_string(), p))
+            .collect()
+    }
+
+    fn signal() -> Signal {
+        Signal::from_input(input(Severity::Error))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_succeeds_first_try_without_backoff() {
+        let ok = FlakyProvider::new("ok", 0);
+        let start = tokio::time::Instant::now();
+
+        let result = deliver(&signal(), &routing_to(&["ok"]), &registry(vec![ok.clone()])).await;
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("ok"));
+        assert_eq!(result.attempts, 1);
+        assert_eq!(ok.calls(), 1);
+        assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_retries_with_exponential_backoff_then_succeeds() {
+        let flaky = FlakyProvider::new("flaky", 2);
+        let start = tokio::time::Instant::now();
+
+        let result = deliver(
+            &signal(),
+            &routing_to(&["flaky"]),
+            &registry(vec![flaky.clone()]),
+        )
+        .await;
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.attempts, 3);
+        assert_eq!(flaky.calls(), 3);
+        // Backoff after attempt n is INITIAL_BACKOFF_MS * 2^n: 400ms + 800ms.
+        assert_eq!(start.elapsed(), Duration::from_millis(1200));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_falls_back_to_next_provider_after_retries_are_exhausted() {
+        let broken = FlakyProvider::new("broken", u32::MAX);
+        let backup = FlakyProvider::new("backup", 0);
+
+        let result = deliver(
+            &signal(),
+            &routing_to(&["broken", "backup"]),
+            &registry(vec![broken.clone(), backup.clone()]),
+        )
+        .await;
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("backup"));
+        assert_eq!(result.attempts, 1);
+        assert_eq!(broken.calls(), MAX_RETRY_ATTEMPTS);
+        assert_eq!(backup.calls(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_stops_at_first_successful_provider() {
+        let first = FlakyProvider::new("first", 0);
+        let second = FlakyProvider::new("second", 0);
+
+        let result = deliver(
+            &signal(),
+            &routing_to(&["first", "second"]),
+            &registry(vec![first.clone(), second.clone()]),
+        )
+        .await;
+
+        assert_eq!(result.provider.as_deref(), Some("first"));
+        assert_eq!(second.calls(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_reports_last_error_when_every_provider_fails() {
+        let a = FlakyProvider::new("a", u32::MAX);
+        let b = FlakyProvider::new("b", u32::MAX);
+
+        let result = deliver(
+            &signal(),
+            &routing_to(&["a", "b"]),
+            &registry(vec![a.clone(), b.clone()]),
+        )
+        .await;
+
+        assert_eq!(result.status, DeliveryStatus::Failed);
+        assert_eq!(result.provider, None);
+        assert_eq!(result.attempts, MAX_RETRY_ATTEMPTS);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("delivery failed: b failure #3")
+        );
+        assert_eq!(a.calls(), MAX_RETRY_ATTEMPTS);
+        assert_eq!(b.calls(), MAX_RETRY_ATTEMPTS);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_skips_unregistered_provider_and_uses_the_next() {
+        let ok = FlakyProvider::new("ok", 0);
+
+        let result = deliver(
+            &signal(),
+            &routing_to(&["missing", "ok"]),
+            &registry(vec![ok.clone()]),
+        )
+        .await;
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deliver_with_no_registered_provider_fails_with_a_message() {
+        let result = deliver(&signal(), &routing_to(&["missing"]), &HashMap::new()).await;
+
+        assert_eq!(result.status, DeliveryStatus::Failed);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("no provider delivered successfully")
+        );
+    }
+
+    fn client_with(providers: Vec<Arc<dyn Provider>>, route: &[&str], db: &str) -> SignalClient {
+        SignalClient {
+            sink: Arc::new(SqliteSink::open(db).expect("open sink")),
+            routing: routing_to(route),
+            providers: registry(providers),
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("runtime"),
+        }
+    }
+
+    #[test]
+    fn notify_sync_times_out_and_records_the_failure() {
+        let db = temp_db();
+        let client = client_with(vec![Arc::new(HangingProvider)], &["hanging"], &db);
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_millis(50))
+            .expect("notify_sync returns a result, not an error, on timeout");
+
+        assert_eq!(result.status, DeliveryStatus::Failed);
+        assert_eq!(result.attempts, 0);
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("timed out")));
+        assert_eq!(stored_rows(&db), vec![("failed".to_string(), None)]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn notify_sync_rejects_invalid_input_without_recording_it() {
+        let db = temp_db();
+        let client = client_with(vec![FlakyProvider::new("ok", 0)], &["ok"], &db);
+        let mut bad = input(Severity::Info);
+        bad.title = "  ".into();
+
+        let err = client
+            .notify_sync(bad, Duration::from_secs(1))
+            .expect_err("empty title must be rejected");
+
+        assert!(matches!(err, SignalError::Validation(_)));
+        assert!(stored_rows(&db).is_empty());
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn notify_async_delivers_in_the_background_and_records_it() {
+        let db = temp_db();
+        let ok = FlakyProvider::new("ok", 0);
+        let client = client_with(vec![ok.clone()], &["ok"], &db);
+
+        client.notify_async(input(Severity::Error));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while stored_rows(&db).is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            stored_rows(&db),
+            vec![("delivered".to_string(), Some("ok".to_string()))]
+        );
+        assert_eq!(ok.calls(), 1);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn notify_async_drops_invalid_input_without_delivering() {
+        let db = temp_db();
+        let ok = FlakyProvider::new("ok", 0);
+        let client = client_with(vec![ok.clone()], &["ok"], &db);
+        let mut bad = input(Severity::Info);
+        bad.source = String::new();
+
+        client.notify_async(bad);
+        std::thread::sleep(Duration::from_millis(100));
+
+        assert_eq!(ok.calls(), 0);
+        assert!(stored_rows(&db).is_empty());
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn from_config_registers_only_configured_providers() {
+        let db = temp_db();
+        let yaml = format!(
+            "providers:\n  slack:\n    webhook_url: \"https://hooks.example.test/x\"\nstorage:\n  path: \"{db}\"\n"
+        );
+        let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
+            .expect("client");
+
+        let mut names: Vec<&str> = client.providers.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["console", "slack"]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn from_config_fails_when_the_sink_cannot_be_opened() {
+        let yaml = "storage:\n  path: \"/nonexistent-opssignal-dir/sub/signals.db\"\n";
+        let err = SignalClient::from_config(&Config::from_yaml_str(yaml).expect("config"))
+            .err()
+            .expect("unopenable sink must fail");
+        assert!(matches!(err, SignalError::Sink(_)));
+    }
 }
