@@ -53,7 +53,7 @@ This installs all tooling, builds the workspace, runs the full test suite,
 wires up git hooks, and (if Docker is running) pre-builds the dev image.
 Safe to re-run if your environment gets out of sync.
 
-Prerequisites installed automatically if missing: **uv**, **Rust >= 1.75**.
+Prerequisites installed automatically if missing: **uv**, **Rust >= 1.89**.
 The Python extension uses the `abi3` stable ABI (Python 3.9–3.14+).
 
 **Local day-to-day:**

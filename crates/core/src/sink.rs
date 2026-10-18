@@ -7,8 +7,18 @@ use std::sync::Mutex;
 /// API the SDK exposes. Querying, dashboards, and aggregation are
 /// explicitly out of scope here; that's the hosted control plane's job,
 /// reading from the same store OSS users already populate.
+///
+/// Each signal is written twice: `record` before delivery starts, with
+/// status `pending`, and `complete` once the outcome is known. A signal
+/// whose process exits mid-delivery therefore stays visible as pending
+/// instead of vanishing.
 pub trait SignalSink: Send + Sync {
-    fn write(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
+    /// Stores a signal that is about to be delivered.
+    fn record(&self, signal: &Signal) -> Result<(), SignalError>;
+
+    /// Stores the delivery outcome. Must also work when `record` failed
+    /// or never ran for this signal, so the outcome is never lost.
+    fn complete(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
 }
 
 /// Zero-config default sink. Always available, no setup required, so
@@ -49,8 +59,13 @@ impl SqliteSink {
     }
 }
 
-impl SignalSink for SqliteSink {
-    fn write(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError> {
+impl SqliteSink {
+    fn insert(
+        &self,
+        signal: &Signal,
+        result: &DeliveryResult,
+        on_conflict: &str,
+    ) -> Result<(), SignalError> {
         let conn = self
             .conn
             .lock()
@@ -58,8 +73,10 @@ impl SignalSink for SqliteSink {
         let payload =
             serde_json::to_string(signal).map_err(|e| SignalError::Sink(e.to_string()))?;
         conn.execute(
-            "INSERT INTO signals (id, source, event_type, severity, title, environment, dedup_key, delivery_status, provider, error, payload_json, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            &format!(
+                "INSERT INTO signals (id, source, event_type, severity, title, environment, dedup_key, delivery_status, provider, error, payload_json, timestamp)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) {on_conflict}"
+            ),
             rusqlite::params![
                 signal.id.to_string(),
                 signal.source,
@@ -77,6 +94,21 @@ impl SignalSink for SqliteSink {
         )
         .map_err(|e| SignalError::Sink(e.to_string()))?;
         Ok(())
+    }
+}
+
+impl SignalSink for SqliteSink {
+    fn record(&self, signal: &Signal) -> Result<(), SignalError> {
+        self.insert(signal, &DeliveryResult::pending(), "")
+    }
+
+    fn complete(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError> {
+        self.insert(
+            signal,
+            result,
+            "ON CONFLICT(id) DO UPDATE SET delivery_status = excluded.delivery_status, \
+             provider = excluded.provider, error = excluded.error",
+        )
     }
 }
 
@@ -118,22 +150,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn write_stores_every_column() {
-        let db = temp_db();
-        let sink = SqliteSink::open(&db).expect("open");
-        let signal = signal();
-        sink.write(&signal, &failed()).expect("write");
-
-        let conn = Connection::open(&db).expect("reopen");
-        let row: Vec<Option<String>> = conn
+    fn columns(db: &str) -> Vec<Option<String>> {
+        Connection::open(db)
+            .expect("reopen")
             .query_row(
                 "SELECT id, source, event_type, severity, title, environment, dedup_key, \
                  delivery_status, provider, error, payload_json, timestamp FROM signals",
                 [],
                 |r| (0..12).map(|i| r.get(i)).collect(),
             )
-            .expect("one row");
+            .expect("one row")
+    }
+
+    #[test]
+    fn complete_stores_every_column() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        let signal = signal();
+        sink.complete(&signal, &failed()).expect("complete");
+
+        let row = columns(&db);
         let col = |i: usize| row[i].as_deref();
 
         assert_eq!(col(0), Some(signal.id.to_string().as_str()));
@@ -154,14 +190,52 @@ mod tests {
     }
 
     #[test]
+    fn record_stores_the_signal_as_pending() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        sink.record(&signal()).expect("record");
+
+        let row = columns(&db);
+        assert_eq!(row[7].as_deref(), Some("pending"));
+        assert_eq!(row[8], None);
+        assert_eq!(row[9], None);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn complete_updates_the_recorded_row_in_place() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        let signal = signal();
+        sink.record(&signal).expect("record");
+        let delivered = DeliveryResult {
+            status: DeliveryStatus::Delivered,
+            provider: Some("slack".into()),
+            error: None,
+            attempts: 1,
+        };
+        sink.complete(&signal, &delivered).expect("complete");
+
+        let conn = Connection::open(&db).expect("reopen");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM signals", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+        let row = columns(&db);
+        assert_eq!(row[7].as_deref(), Some("delivered"));
+        assert_eq!(row[8].as_deref(), Some("slack"));
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
     fn reopening_an_existing_database_keeps_its_rows() {
         let db = temp_db();
         SqliteSink::open(&db)
             .expect("open")
-            .write(&signal(), &failed())
-            .expect("write");
+            .record(&signal())
+            .expect("record");
         let sink = SqliteSink::open(&db).expect("reopen is idempotent");
-        sink.write(&signal(), &failed()).expect("second write");
+        sink.record(&signal()).expect("second record");
 
         let count: i64 = Connection::open(&db)
             .expect("reopen")
@@ -172,14 +246,14 @@ mod tests {
     }
 
     #[test]
-    fn writing_the_same_signal_twice_is_a_sink_error() {
+    fn recording_the_same_signal_twice_is_a_sink_error() {
         let db = temp_db();
         let sink = SqliteSink::open(&db).expect("open");
         let signal = signal();
-        sink.write(&signal, &failed()).expect("first write");
+        sink.record(&signal).expect("first record");
 
         let err = sink
-            .write(&signal, &failed())
+            .record(&signal)
             .expect_err("duplicate id violates the primary key");
         assert!(matches!(err, SignalError::Sink(_)));
         let _ = std::fs::remove_file(&db);

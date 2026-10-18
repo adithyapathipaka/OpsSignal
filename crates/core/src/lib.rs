@@ -5,6 +5,7 @@ mod chain;
 mod cloud;
 pub mod config;
 pub mod delivery;
+mod inflight;
 pub mod providers;
 mod reload;
 pub mod routing;
@@ -16,8 +17,13 @@ pub mod source;
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 200;
 
+/// How long dropping a [`SignalClient`] waits for fire-and-forget
+/// deliveries still in flight.
+pub const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
 use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
+use inflight::InFlight;
 use providers::{console::ConsoleProvider, slack::SlackProvider, webhook::WebhookProvider};
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
@@ -62,13 +68,18 @@ impl Pipeline {
 
 type SharedPipeline = Arc<RwLock<Arc<Pipeline>>>;
 
-/// The assembled pipeline: validate -> persist + route happen off the
-/// same validated signal, in parallel conceptually, so a sink failure
-/// can never block delivery and vice versa (see architecture review,
-/// component diagram).
+/// The assembled pipeline: validate -> record -> route -> deliver ->
+/// complete. The signal is saved before delivery starts, so it survives
+/// a process exit mid-delivery as `pending`. A sink failure is logged
+/// and never stops delivery.
+///
+/// Dropping the client waits up to [`DEFAULT_FLUSH_TIMEOUT`] for
+/// fire-and-forget deliveries; call [`SignalClient::flush`] to choose
+/// the wait, or when the client lives in a static that is never dropped.
 pub struct SignalClient {
     pub sink: Arc<dyn SignalSink>,
     pipeline: SharedPipeline,
+    in_flight: Arc<InFlight>,
     pub runtime: tokio::runtime::Runtime,
 }
 
@@ -134,6 +145,7 @@ impl SignalClient {
         Ok(SignalClient {
             sink,
             pipeline: Arc::new(RwLock::new(Arc::new(Pipeline::from_config(config)))),
+            in_flight: Arc::default(),
             runtime,
         })
     }
@@ -143,25 +155,38 @@ impl SignalClient {
         current(&self.pipeline)
     }
 
-    /// Fire-and-forget. Never blocks the caller beyond spawning the
-    /// task. This is the default an Airflow on_failure_callback should
-    /// use — a flaky Slack webhook must never add latency or failure
-    /// risk to the DAG run itself.
+    /// Fire-and-forget. Blocks the caller only for the local sink
+    /// write, never on a provider. This is the default an Airflow
+    /// on_failure_callback should use — a flaky Slack webhook must never
+    /// add latency or failure risk to the DAG run itself.
     pub fn notify_async(&self, input: SignalInput) {
         if let Err(e) = signal::validate(&input) {
             tracing::warn!("signal validation failed, dropping: {e}");
             return;
         }
         let signal = Signal::from_input(input);
+        // On the caller's thread, so the signal is on disk before this
+        // returns even if the process exits right after.
+        record(self.sink.as_ref(), &signal);
         let sink = Arc::clone(&self.sink);
         let pipeline = self.pipeline();
+        let guard = self.in_flight.start();
 
         self.runtime.spawn(async move {
+            let _guard = guard;
             let result = deliver(&signal, &pipeline.routing, &pipeline.providers).await;
-            if let Err(e) = sink.write(&signal, &result) {
+            if let Err(e) = sink.complete(&signal, &result) {
                 tracing::error!("sink write failed: {e}");
             }
         });
+    }
+
+    /// Waits up to `timeout` for every [`SignalClient::notify_async`]
+    /// delivery started so far to finish. Returns false if some were
+    /// still running; those stay recorded as `pending`. Call it before
+    /// the process exits.
+    pub fn flush(&self, timeout: Duration) -> bool {
+        self.in_flight.wait(timeout) == 0
     }
 
     /// Blocking, bounded by timeout. Caller gets a definitive result.
@@ -175,6 +200,7 @@ impl SignalClient {
     ) -> Result<DeliveryResult, SignalError> {
         signal::validate(&input)?;
         let signal = Signal::from_input(input);
+        record(self.sink.as_ref(), &signal);
         let pipeline = self.pipeline();
 
         let result = self.runtime.block_on(async {
@@ -191,8 +217,26 @@ impl SignalClient {
             })
         });
 
-        self.sink.write(&signal, &result)?;
+        self.sink.complete(&signal, &result)?;
         Ok(result)
+    }
+}
+
+impl Drop for SignalClient {
+    fn drop(&mut self) {
+        if !self.flush(DEFAULT_FLUSH_TIMEOUT) {
+            tracing::warn!(
+                "exiting with signals still being delivered; they stay recorded as pending"
+            );
+        }
+    }
+}
+
+/// A sink that can't record must not stop the alert going out;
+/// `complete` writes the whole row again afterwards.
+fn record(sink: &dyn SignalSink, signal: &Signal) {
+    if let Err(e) = sink.record(signal) {
+        tracing::error!("sink write failed, delivering anyway: {e}");
     }
 }
 
@@ -550,6 +594,7 @@ mod tests {
                 routing: routing_to(route),
                 providers: registry(providers),
             }))),
+            in_flight: Arc::default(),
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -601,16 +646,165 @@ mod tests {
 
         client.notify_async(input(Severity::Error));
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while stored_rows(&db).is_empty() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(client.flush(Duration::from_secs(5)));
         assert_eq!(
             stored_rows(&db),
             vec![("delivered".to_string(), Some("ok".to_string()))]
         );
         assert_eq!(ok.calls(), 1);
         let _ = std::fs::remove_file(&db);
+    }
+
+    /// Sleeps for `delay` and then succeeds.
+    struct SlowProvider(Duration);
+
+    #[async_trait::async_trait]
+    impl Provider for SlowProvider {
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+
+        async fn send(&self, _signal: &Signal) -> Result<(), SignalError> {
+            tokio::time::sleep(self.0).await;
+            Ok(())
+        }
+    }
+
+    /// Captures what the sink holds at the moment of delivery.
+    struct SinkObserver {
+        db: String,
+        seen: std::sync::Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for SinkObserver {
+        fn name(&self) -> &'static str {
+            "observer"
+        }
+
+        async fn send(&self, _signal: &Signal) -> Result<(), SignalError> {
+            *self.seen.lock().expect("seen") = stored_rows(&self.db);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn signal_is_saved_as_pending_before_delivery() {
+        let db = temp_db();
+        let observer = Arc::new(SinkObserver {
+            db: db.clone(),
+            seen: Default::default(),
+        });
+        let client = client_with(vec![observer.clone()], &["observer"], &db);
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("notify_sync");
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(
+            *observer.seen.lock().expect("seen"),
+            vec![("pending".to_string(), None)]
+        );
+        assert_eq!(
+            stored_rows(&db),
+            vec![("delivered".to_string(), Some("observer".to_string()))]
+        );
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn notify_async_saves_the_signal_before_returning() {
+        let db = temp_db();
+        let client = client_with(
+            vec![Arc::new(SlowProvider(Duration::from_millis(200)))],
+            &["slow"],
+            &db,
+        );
+
+        client.notify_async(input(Severity::Error));
+
+        assert_eq!(stored_rows(&db), vec![("pending".to_string(), None)]);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn flush_waits_for_background_deliveries() {
+        let db = temp_db();
+        let client = client_with(
+            vec![Arc::new(SlowProvider(Duration::from_millis(100)))],
+            &["slow"],
+            &db,
+        );
+
+        client.notify_async(input(Severity::Error));
+        client.notify_async(input(Severity::Error));
+
+        assert!(client.flush(Duration::from_secs(5)));
+        assert_eq!(
+            stored_rows(&db),
+            vec![("delivered".to_string(), Some("slow".to_string())); 2]
+        );
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn flush_gives_up_after_the_timeout_and_leaves_the_signal_pending() {
+        let db = temp_db();
+        let client = client_with(
+            vec![Arc::new(SlowProvider(Duration::from_millis(300)))],
+            &["slow"],
+            &db,
+        );
+
+        client.notify_async(input(Severity::Error));
+
+        assert!(!client.flush(Duration::from_millis(20)));
+        assert_eq!(stored_rows(&db), vec![("pending".to_string(), None)]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn dropping_the_client_finishes_background_deliveries() {
+        let db = temp_db();
+        let client = client_with(
+            vec![Arc::new(SlowProvider(Duration::from_millis(100)))],
+            &["slow"],
+            &db,
+        );
+
+        client.notify_async(input(Severity::Error));
+        drop(client);
+
+        assert_eq!(
+            stored_rows(&db),
+            vec![("delivered".to_string(), Some("slow".to_string()))]
+        );
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_sink_that_cannot_record_still_lets_the_signal_through() {
+        struct BrokenRecord;
+        impl SignalSink for BrokenRecord {
+            fn record(&self, _: &Signal) -> Result<(), SignalError> {
+                Err(SignalError::Sink("disk full".into()))
+            }
+            fn complete(&self, _: &Signal, _: &DeliveryResult) -> Result<(), SignalError> {
+                Ok(())
+            }
+        }
+        let ok = FlakyProvider::new("ok", 0);
+        let mut client = client_with(vec![ok.clone()], &["ok"], &temp_db());
+        client.sink = Arc::new(BrokenRecord);
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("notify_sync");
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(ok.calls(), 1);
     }
 
     #[test]
