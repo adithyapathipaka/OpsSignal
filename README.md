@@ -5,9 +5,9 @@ routed operational notifications — Slack, webhooks, and more, from a single
 event model.
 
 > **Status: early/alpha (v0.1 in progress).** This project currently has one
-> real, tested integration target: **Airflow**, via the Python bindings. Java
-> and Go bindings, the CLI, and additional providers are designed for (see
-> `crates/ffi` and the architecture docs) but **not yet built**. If you're
+> real, tested integration target: **Airflow**, via the Python bindings. A
+> basic CLI exists; Java and Go bindings and additional providers are designed
+> for (see `crates/ffi` and the architecture docs) but **not yet built**. If you're
 > evaluating this for production use today, it is an Airflow/dbt-shop tool —
 > not yet the generic "any backend application" SDK it aims to become.
 
@@ -65,6 +65,11 @@ routes:
 No config? Signals fall back to the console provider — nothing is ever
 silently dropped.
 
+## Documentation
+
+Full docs, including configuration, CLI reference, architecture diagrams and
+the Rust API reference: **https://adithyapathipaka.github.io/OpsSignal/**
+
 ## Architecture
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design:
@@ -75,9 +80,9 @@ the FFI panic-safety rules every binding must follow.
 
 | Version | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack providers, SQLite sink, Python bindings, Airflow adapter |
+| v0.1 (current) | Rust core, Console/Webhook/Slack providers, SQLite sink, Python bindings, Airflow adapter, CLI |
 | v0.2 | Dedup, retry/backoff tuning, Teams + Alertmanager providers |
-| v0.3 | Postgres sink, CLI |
+| v0.3 | Postgres sink |
 | v0.4 | dbt + Dagster adapters |
 | v0.5+ | Java/Go bindings — **only if real external demand appears** |
 
