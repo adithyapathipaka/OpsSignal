@@ -15,6 +15,9 @@ OpsSignal looks for its config in this order:
     | `az://container/path/signal.yaml` | Azure Blob Storage | Python: `opssignal[azure]`. Set `AZURE_STORAGE_ACCOUNT_NAME` to the storage account. |
     | `appconfig://application/environment/profile` | AWS AppConfig | Python: `opssignal[aws]`. See [Managed config services](#managed-config-services). |
     | `azappconfig://store/key?label=prod` | Azure App Configuration | Python: `opssignal[azure]`. `?label=` is optional. |
+    | `dynamodb://table/id` | Amazon DynamoDB item | Python: `opssignal[aws]`. See [Databases](#databases). |
+    | `firestore://project/collection/document` | Firestore document | Python: `opssignal[gcp]`. |
+    | `cosmos://account/database/container/id` | Azure Cosmos DB item | Python: `opssignal[azure]`. |
 
 2. `./signal.yaml` in the current working directory.
 3. Nothing found: the zero-config default (console provider, SQLite sink at
@@ -32,9 +35,9 @@ extra that installs a small native add-on, which `opssignal` finds on its own:
 
 | Install | Adds |
 |---|---|
-| `pip install 'opssignal[aws]'` | `s3://`, `appconfig://` |
-| `pip install 'opssignal[gcp]'` | `gs://` |
-| `pip install 'opssignal[azure]'` | `az://`, `azappconfig://` |
+| `pip install 'opssignal[aws]'` | `s3://`, `appconfig://`, `dynamodb://` |
+| `pip install 'opssignal[gcp]'` | `gs://`, `firestore://` |
+| `pip install 'opssignal[azure]'` | `az://`, `azappconfig://`, `cosmos://` |
 | `pip install 'opssignal[all]'` | all three |
 
 If `SIGNAL_CONFIG` names a cloud whose extra isn't installed, the first
@@ -48,9 +51,9 @@ feature named like the pip extra:
 
 | Build | Adds |
 |---|---|
-| `cargo build -p opssignal-cli --features aws` | `s3://`, `appconfig://` |
-| `cargo build -p opssignal-cli --features gcp` | `gs://` |
-| `cargo build -p opssignal-cli --features azure` | `az://`, `azappconfig://` |
+| `cargo build -p opssignal-cli --features aws` | `s3://`, `appconfig://`, `dynamodb://` |
+| `cargo build -p opssignal-cli --features gcp` | `gs://`, `firestore://` |
+| `cargo build -p opssignal-cli --features azure` | `az://`, `azappconfig://`, `cosmos://` |
 | `cargo build -p opssignal-cli --features all` | all three |
 
 The same features exist on `opssignal-ffi` for the C library. If you depend on
@@ -125,6 +128,40 @@ that fails to load, OpsSignal uses the last good cached copy. If there is no
 cached copy either, it starts on the zero-config default (console only) and
 logs why, so a bucket outage never stops a service from starting or sending
 signals. It switches to the real config as soon as the source is back.
+
+### Databases
+
+Use a database when teams change their own routing through an internal UI or
+API instead of pull requests: the tool writes each team's YAML into one item,
+and OpsSignal reads it like a file. Writes, change history (DynamoDB Streams,
+the Cosmos DB change feed, Firestore triggers) and access control stay in the database. OpsSignal
+only ever reads.
+
+Each item holds the whole YAML of one file in a single string attribute,
+`config` by default:
+
+| | DynamoDB | Firestore | Cosmos DB |
+|---|---|---|---|
+| URL | `dynamodb://<table>/<id>` | `firestore://<project>/<collection>/<document>` (nested paths allowed) | `cosmos://<account>/<database>/<container>/<id>` |
+| Item lookup | String partition key `id` (`?key=` to rename); tables with a sort key are not supported | Document path; `?database=` for a non-default database | Item id; partition key value is the id, or `?pk=` |
+| YAML attribute | `config` (`?value=` to rename) | string field `config` (`?field=`) | string property `config` (`?field=`) |
+| Permissions | `dynamodb:GetItem` | `datastore.entities.get` (Cloud Datastore Viewer) | Cosmos DB Built-in Data Reader (data-plane RBAC; account keys are not used) |
+| Endpoint override | `AWS_ENDPOINT_URL_DYNAMODB` (DynamoDB Local) | `FIRESTORE_EMULATOR_HOST` | `AZURE_COSMOS_ENDPOINT`, with `{account}` in it |
+
+`extends:` names another item of the same table, database or container:
+
+```yaml
+# dynamodb://opssignal-config/payments
+extends: default          # item "default" of the same table
+```
+
+In Firestore a relative entry resolves like a path (`../shared/db-alerts` from
+`opssignal/payments`). In Cosmos DB the parent's partition key value is taken
+to be its id; use a full `cosmos://` URL with `?pk=` otherwise.
+
+Each check is one read per file per process: an eventually consistent
+`GetItem` (half a read unit), one Firestore document read, or one Cosmos DB
+point read (sent with the last ETag, so an unchanged item is a 304).
 
 ## Live reload
 

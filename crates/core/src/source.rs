@@ -12,6 +12,11 @@
 //!   needs the `aws` cargo feature
 //! - `azappconfig://store/key?label=prod`: Azure App Configuration,
 //!   needs the `azure` cargo feature
+//! - `dynamodb://table/id`: an Amazon DynamoDB item, needs `aws`
+//! - `firestore://project/collection/document`: a Firestore document,
+//!   needs `gcp`
+//! - `cosmos://account/database/container/id`: an Azure Cosmos DB item,
+//!   needs `azure`
 //!
 //! Cloud fetches use each platform's standard credential chain (IAM
 //! role / IRSA / env keys on AWS; workload identity / ADC / service
@@ -73,13 +78,41 @@ pub enum ConfigSource {
         key: String,
         label: Option<String>,
     },
+    /// A DynamoDB item, read by its string partition key (attribute
+    /// `key`, default `id`); the YAML is in attribute `value` (default
+    /// `config`).
+    DynamoDb {
+        table: String,
+        id: String,
+        key: Option<String>,
+        value: Option<String>,
+    },
+    /// A Firestore document (`collection/doc`, possibly nested); the
+    /// YAML is in string field `field` (default `config`).
+    Firestore {
+        project: String,
+        document: String,
+        database: Option<String>,
+        field: Option<String>,
+    },
+    /// A Cosmos DB item, read by id; its partition key value is `pk`, or
+    /// the id itself. The YAML is in string property `field` (default
+    /// `config`).
+    Cosmos {
+        account: String,
+        database: String,
+        container: String,
+        id: String,
+        pk: Option<String>,
+        field: Option<String>,
+    },
 }
 
 /// The URL schemes each cloud's add-on serves.
 pub const CLOUD_SCHEMES: [(&str, &[&str]); 3] = [
-    ("aws", &["s3", "appconfig"]),
-    ("gcp", &["gs"]),
-    ("azure", &["az", "azappconfig"]),
+    ("aws", &["s3", "appconfig", "dynamodb"]),
+    ("gcp", &["gs", "firestore"]),
+    ("azure", &["az", "azappconfig", "cosmos"]),
 ];
 
 impl fmt::Display for ConfigSource {
@@ -97,10 +130,36 @@ impl fmt::Display for ConfigSource {
             } => write!(f, "appconfig://{application}/{environment}/{profile}"),
             ConfigSource::AzureAppConfig { store, key, label } => {
                 write!(f, "azappconfig://{store}/{key}")?;
-                match label {
-                    Some(label) => write!(f, "?label={label}"),
-                    None => Ok(()),
-                }
+                write_query(f, &[("label", label)])
+            }
+            ConfigSource::DynamoDb {
+                table,
+                id,
+                key,
+                value,
+            } => {
+                write!(f, "dynamodb://{table}/{id}")?;
+                write_query(f, &[("key", key), ("value", value)])
+            }
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                write!(f, "firestore://{project}/{document}")?;
+                write_query(f, &[("database", database), ("field", field)])
+            }
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                id,
+                pk,
+                field,
+            } => {
+                write!(f, "cosmos://{account}/{database}/{container}/{id}")?;
+                write_query(f, &[("pk", pk), ("field", field)])
             }
         }
     }
@@ -142,21 +201,64 @@ impl ConfigSource {
             )));
         }
         if let Some(rest) = raw.strip_prefix("azappconfig://") {
-            let (path, label) = match rest.split_once('?') {
-                Some((path, query)) => match query.strip_prefix("label=") {
-                    Some(label) if !label.is_empty() && !label.contains('&') => {
-                        (path, Some(label.to_string()))
-                    }
-                    _ => {
-                        return Err(config_err(format!(
-                            "{raw}: the only query parameter is ?label=<label>"
-                        )))
-                    }
-                },
-                None => (rest, None),
-            };
+            let (path, [label]) = split_query(rest, raw, ["label"])?;
             let (store, key) = split_bucket(path, raw)?;
             return Ok(ConfigSource::AzureAppConfig { store, key, label });
+        }
+        if let Some(rest) = raw.strip_prefix("dynamodb://") {
+            let (path, [key, value]) = split_query(rest, raw, ["key", "value"])?;
+            return match path.split_once('/') {
+                Some((table, id)) if !table.is_empty() && !id.is_empty() && !id.contains('/') => {
+                    Ok(ConfigSource::DynamoDb {
+                        table: table.to_string(),
+                        id: id.to_string(),
+                        key,
+                        value,
+                    })
+                }
+                _ => Err(config_err(format!(
+                    "{raw}: expected dynamodb://<table>/<item id>"
+                ))),
+            };
+        }
+        if let Some(rest) = raw.strip_prefix("firestore://") {
+            let (path, [database, field]) = split_query(rest, raw, ["database", "field"])?;
+            let (project, document) = split_bucket(path, raw)?;
+            let segments: Vec<&str> = document.split('/').collect();
+            if !segments.len().is_multiple_of(2) || segments.iter().any(|s| s.is_empty()) {
+                return Err(config_err(format!(
+                    "{raw}: expected firestore://<project>/<collection>/<document>"
+                )));
+            }
+            return Ok(ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            });
+        }
+        if let Some(rest) = raw.strip_prefix("cosmos://") {
+            let (path, [pk, field]) = split_query(rest, raw, ["pk", "field"])?;
+            let parts: Vec<&str> = path.split('/').collect();
+            return match parts[..] {
+                [account, database, container, id]
+                    if ![account, database, container, id]
+                        .iter()
+                        .any(|p| p.is_empty()) =>
+                {
+                    Ok(ConfigSource::Cosmos {
+                        account: account.to_string(),
+                        database: database.to_string(),
+                        container: container.to_string(),
+                        id: id.to_string(),
+                        pk,
+                        field,
+                    })
+                }
+                _ => Err(config_err(format!(
+                    "{raw}: expected cosmos://<account>/<database>/<container>/<item id>"
+                ))),
+            };
         }
         if raw.starts_with("https://") {
             return Ok(ConfigSource::Http(raw.to_string()));
@@ -179,7 +281,7 @@ impl ConfigSource {
         if raw.contains("://") {
             return Err(config_err(format!(
                 "{raw}: unsupported scheme (use a local path, https://, s3://, gs://, az://, \
-                 appconfig:// or azappconfig://)"
+                 appconfig://, azappconfig://, dynamodb://, firestore:// or cosmos://)"
             )));
         }
         Ok(ConfigSource::File(PathBuf::from(raw)))
@@ -284,6 +386,51 @@ impl ConfigSource {
                 key: self.join_key(key, reference)?,
                 label: label.clone(),
             },
+            // Another item of the same table, read the same way.
+            ConfigSource::DynamoDb {
+                table, key, value, ..
+            } => ConfigSource::DynamoDb {
+                table: table.clone(),
+                id: self.flat_name(reference)?,
+                key: key.clone(),
+                value: value.clone(),
+            },
+            // Document paths resolve like paths, in the same database.
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                let document = self.join_key(document, reference)?;
+                if !document.split('/').count().is_multiple_of(2) {
+                    return Err(config_err(format!(
+                        "{self}: '{reference}' is a collection, not a document"
+                    )));
+                }
+                ConfigSource::Firestore {
+                    project: project.clone(),
+                    document,
+                    database: database.clone(),
+                    field: field.clone(),
+                }
+            }
+            // Another item of the same container. Its partition key is
+            // assumed to be its id; use a full URL with ?pk= otherwise.
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                field,
+                ..
+            } => ConfigSource::Cosmos {
+                account: account.clone(),
+                database: database.clone(),
+                container: container.clone(),
+                id: self.flat_name(reference)?,
+                pk: None,
+                field: field.clone(),
+            },
         };
         if self.is_remote() && !joined.is_remote() {
             return Err(config_err(format!(
@@ -291,6 +438,17 @@ impl ConfigSource {
             )));
         }
         Ok(joined)
+    }
+
+    /// A relative `extends` entry that names a sibling item.
+    fn flat_name(&self, reference: &str) -> Result<String, SignalError> {
+        if reference.is_empty() || reference.contains('/') || reference.contains('?') {
+            return Err(config_err(format!(
+                "{self}: '{reference}' is not an item id; use a full {}:// URL",
+                self.scheme()
+            )));
+        }
+        Ok(reference.to_string())
     }
 
     /// `reference` resolved against the "directory" of object `key`.
@@ -347,6 +505,9 @@ impl ConfigSource {
             ConfigSource::Azure { .. } => "az",
             ConfigSource::AppConfig { .. } => "appconfig",
             ConfigSource::AzureAppConfig { .. } => "azappconfig",
+            ConfigSource::DynamoDb { .. } => "dynamodb",
+            ConfigSource::Firestore { .. } => "firestore",
+            ConfigSource::Cosmos { .. } => "cosmos",
         }
     }
 
@@ -393,9 +554,52 @@ impl ConfigSource {
                 environment,
                 profile,
             } => crate::cloud::aws::fetch_appconfig(application, environment, profile).await,
+            #[cfg(feature = "aws")]
+            ConfigSource::DynamoDb {
+                table,
+                id,
+                key,
+                value,
+            } => {
+                crate::cloud::aws::fetch_dynamodb(table, id, key.as_deref(), value.as_deref()).await
+            }
             #[cfg(feature = "gcp")]
             ConfigSource::Gcs { bucket, object } => {
                 crate::cloud::gcp::fetch_gcs(bucket, object).await
+            }
+            #[cfg(feature = "gcp")]
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                crate::cloud::gcp::fetch_firestore(
+                    project,
+                    document,
+                    database.as_deref(),
+                    field.as_deref(),
+                )
+                .await
+            }
+            #[cfg(feature = "azure")]
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                id,
+                pk,
+                field,
+            } => {
+                crate::cloud::azure::fetch_cosmos(
+                    account,
+                    database,
+                    container,
+                    id,
+                    pk.as_deref(),
+                    field.as_deref(),
+                )
+                .await
             }
             #[cfg(feature = "azure")]
             ConfigSource::Azure { container, blob } => {
@@ -428,6 +632,48 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Splits `path?a=1&b=2` into the path and the values of `allowed`, in
+/// that order. Unknown or repeated parameters are errors, so a typo
+/// can't silently read the wrong item.
+fn split_query<'a, const N: usize>(
+    rest: &'a str,
+    raw: &str,
+    allowed: [&str; N],
+) -> Result<(&'a str, [Option<String>; N]), SignalError> {
+    let mut values: [Option<String>; N] = std::array::from_fn(|_| None);
+    let Some((path, query)) = rest.split_once('?') else {
+        return Ok((rest, values));
+    };
+    for pair in query.split('&') {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let slot = allowed.iter().position(|a| *a == name);
+        match slot {
+            Some(i) if values[i].is_none() && !value.is_empty() => {
+                values[i] = Some(value.to_string());
+            }
+            _ => {
+                let allowed: Vec<String> = allowed.iter().map(|a| format!("{a}=")).collect();
+                return Err(config_err(format!(
+                    "{raw}: unexpected '{pair}' (allowed once each, with a value: {})",
+                    allowed.join(", ")
+                )));
+            }
+        }
+    }
+    Ok((path, values))
+}
+
+fn write_query(f: &mut fmt::Formatter<'_>, pairs: &[(&str, &Option<String>)]) -> fmt::Result {
+    let mut sep = '?';
+    for (name, value) in pairs {
+        if let Some(value) = value {
+            write!(f, "{sep}{name}={value}")?;
+            sep = '&';
+        }
+    }
+    Ok(())
 }
 
 fn split_bucket(rest: &str, raw: &str) -> Result<(String, String), SignalError> {
@@ -905,6 +1151,99 @@ mod tests {
         assert_eq!(
             kv.join("../default").expect("joined").to_string(),
             "azappconfig://ops/opssignal/default?label=prod"
+        );
+    }
+
+    #[test]
+    fn parses_database_sources() {
+        assert_eq!(
+            ConfigSource::parse("dynamodb://cfg/payments?key=team&value=yaml")
+                .expect("valid source"),
+            ConfigSource::DynamoDb {
+                table: "cfg".into(),
+                id: "payments".into(),
+                key: Some("team".into()),
+                value: Some("yaml".into())
+            }
+        );
+        assert_eq!(
+            ConfigSource::parse("firestore://proj/teams/a/configs/main").expect("valid source"),
+            ConfigSource::Firestore {
+                project: "proj".into(),
+                document: "teams/a/configs/main".into(),
+                database: None,
+                field: None
+            }
+        );
+        assert_eq!(
+            ConfigSource::parse("cosmos://acct/db/coll/payments?pk=team-a").expect("valid"),
+            ConfigSource::Cosmos {
+                account: "acct".into(),
+                database: "db".into(),
+                container: "coll".into(),
+                id: "payments".into(),
+                pk: Some("team-a".into()),
+                field: None
+            }
+        );
+        for bad in [
+            "dynamodb://table-only",
+            "dynamodb://t/a/b",
+            "dynamodb://t/a?key=",
+            "dynamodb://t/a?colour=red",
+            "dynamodb://t/a?key=x&key=y",
+            "firestore://proj/collection-only",
+            "firestore://proj/a//b",
+            "cosmos://acct/db/coll",
+            "cosmos://acct/db/coll/id/extra",
+        ] {
+            assert!(ConfigSource::parse(bad).is_err(), "{bad}");
+        }
+        for raw in [
+            "dynamodb://t/a",
+            "dynamodb://t/a?key=k&value=v",
+            "firestore://p/c/d?database=x&field=f",
+            "cosmos://a/d/c/i?pk=p&field=f",
+        ] {
+            assert_eq!(ConfigSource::parse(raw).expect("valid").to_string(), raw);
+        }
+        for (raw, cloud) in [
+            ("dynamodb://t/a", "aws"),
+            ("firestore://p/c/d", "gcp"),
+            ("cosmos://a/d/c/i", "azure"),
+        ] {
+            assert_eq!(
+                ConfigSource::parse(raw).expect("valid").cloud(),
+                Some(cloud)
+            );
+        }
+    }
+
+    #[test]
+    fn database_extends_stay_in_the_same_table() {
+        let join = |base: &str, reference: &str| {
+            ConfigSource::parse(base)
+                .expect("valid source")
+                .join(reference)
+                .map(|s| s.to_string())
+        };
+        assert_eq!(
+            join("dynamodb://cfg/payments?key=team", "default").expect("joined"),
+            "dynamodb://cfg/default?key=team"
+        );
+        assert!(join("dynamodb://cfg/payments", "a/b").is_err());
+        assert_eq!(
+            join("firestore://p/opssignal/payments?database=x", "default").expect("joined"),
+            "firestore://p/opssignal/default?database=x"
+        );
+        assert_eq!(
+            join("firestore://p/teams/a/configs/main", "../../b/configs/main").expect("joined"),
+            "firestore://p/teams/b/configs/main"
+        );
+        assert!(join("firestore://p/teams/a/configs/main", "../x").is_err());
+        assert_eq!(
+            join("cosmos://a/d/c/payments?pk=team-a&field=f", "default").expect("joined"),
+            "cosmos://a/d/c/default?field=f"
         );
     }
 

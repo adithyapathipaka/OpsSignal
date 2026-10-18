@@ -199,3 +199,49 @@ async fn latest(base: &str, token: &str) -> Result<(String, bytes::Bytes), Signa
         .ok_or_else(|| config_err("AppConfig sent no Next-Poll-Configuration-Token"))?;
     Ok((next.to_string(), bytes))
 }
+
+/// Reads one item with `GetItem` (an eventually consistent read, half a
+/// read unit for an item under 4 KB).
+pub(crate) async fn fetch_dynamodb(
+    table: &str,
+    id: &str,
+    key: Option<&str>,
+    value: Option<&str>,
+) -> Result<String, SignalError> {
+    let (key, value) = (key.unwrap_or("id"), value.unwrap_or("config"));
+    let base = endpoint("DYNAMODB", "dynamodb")?;
+    let body = serde_json::json!({
+        "TableName": table,
+        "Key": { key: { "S": id } },
+        "ProjectionExpression": "#v",
+        "ExpressionAttributeNames": { "#v": value },
+    });
+    let (status, _, bytes) = call(
+        "dynamodb",
+        http::Method::POST,
+        &format!("{base}/"),
+        &[
+            ("content-type", "application/x-amz-json-1.0"),
+            ("x-amz-target", "DynamoDB_20120810.GetItem"),
+        ],
+        body.to_string().into_bytes(),
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    let item: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| config_err(format!("unexpected DynamoDB response: {e}")))?;
+    let Some(item) = item.get("Item") else {
+        return Err(config_err(format!("no item with {key} = '{id}'")));
+    };
+    item.get(value)
+        .and_then(|v| v.get("S"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            config_err(format!(
+                "item '{id}' has no string attribute '{value}' holding the config"
+            ))
+        })
+}

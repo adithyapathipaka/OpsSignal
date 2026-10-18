@@ -255,3 +255,96 @@ pub(crate) async fn fetch_app_config(
     }
     Ok(value)
 }
+
+/// Reads one item of a Cosmos DB container through the REST API, with a
+/// Microsoft Entra token (the account needs data-plane RBAC; account
+/// keys are not used). The last ETag is sent, so an unchanged item is a
+/// 304.
+pub(crate) async fn fetch_cosmos(
+    account: &str,
+    database: &str,
+    container: &str,
+    id: &str,
+    pk: Option<&str>,
+    field: Option<&str>,
+) -> Result<String, SignalError> {
+    let field = field.unwrap_or("config");
+    // AZURE_COSMOS_ENDPOINT, with `{account}` in it, covers sovereign
+    // clouds and the emulator.
+    let endpoint = match std::env::var("AZURE_COSMOS_ENDPOINT") {
+        Ok(template) => {
+            let endpoint = template.replace("{account}", account);
+            check_endpoint(&endpoint)?;
+            endpoint.trim_end_matches('/').to_string()
+        }
+        Err(_) => format!("https://{account}.documents.azure.com"),
+    };
+    let scope = format!("{endpoint}/.default");
+    let mut url = reqwest::Url::parse(&endpoint).map_err(|e| config_err(e.to_string()))?;
+    url.path_segments_mut()
+        .map_err(|_| config_err(format!("{endpoint} cannot be a base URL")))?
+        .extend(["dbs", database, "colls", container, "docs", id]);
+
+    let token = token(&scope).await?;
+    let auth: String =
+        url::form_urlencoded::byte_serialize(format!("type=aad&ver=1.0&sig={token}").as_bytes())
+            .collect();
+    let partition_key = serde_json::json!([pk.unwrap_or(id)]).to_string();
+    let date = chrono::Utc::now()
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string();
+
+    let cache_id = url.to_string();
+    let cached = etags()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&cache_id)
+        .cloned();
+    let mut request = client()?
+        .get(url)
+        .header("Authorization", auth)
+        .header("x-ms-version", "2018-12-31")
+        .header("x-ms-date", date)
+        .header("x-ms-documentdb-partitionkey", partition_key);
+    if let Some((etag, _)) = &cached {
+        request = request.header("If-None-Match", etag);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| config_err(e.to_string()))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        if let Some((_, value)) = cached {
+            return Ok(value);
+        }
+    }
+    let bytes = resp.bytes().await.map_err(|e| config_err(e.to_string()))?;
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(config_err(format!(
+            "no item '{id}' with partition key '{}'",
+            pk.unwrap_or(id)
+        )));
+    }
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    let item: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| config_err(format!("unexpected Cosmos DB response: {e}")))?;
+    let value = item
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            config_err(format!(
+                "item '{id}' has no string property '{field}' holding the config"
+            ))
+        })?;
+    if let Some(etag) = item.get("_etag").and_then(|v| v.as_str()) {
+        etags()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(cache_id, (etag.to_string(), value.clone()));
+    }
+    Ok(value)
+}

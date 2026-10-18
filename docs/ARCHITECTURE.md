@@ -154,8 +154,10 @@ mode is worse than not having the SDK at all. This is enforced in
 ## Config sources and reload
 
 `SIGNAL_CONFIG` can name a local file, an `https://`, `s3://`, `gs://` or
-`az://` object, an AWS AppConfig profile (`appconfig://`) or an Azure App
-Configuration key (`azappconfig://`) (`crates/core/src/source.rs`). The cloud
+`az://` object, an AWS AppConfig profile (`appconfig://`), an Azure App
+Configuration key (`azappconfig://`), or one item of DynamoDB (`dynamodb://`),
+Firestore (`firestore://`) or Cosmos DB (`cosmos://`)
+(`crates/core/src/source.rs`). The cloud
 code lives in `crates/core/src/cloud/`, one module per cloud, and non-storage
 services are signed with the credentials object_store already resolves (SigV4
 on AWS; Entra tokens for the service's own audience on Azure), so no cloud SDK
