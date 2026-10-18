@@ -348,3 +348,56 @@ pub(crate) async fn fetch_cosmos(
     }
     Ok(value)
 }
+
+/// Reads a Key Vault secret, its current version unless `version` is
+/// set. `AZURE_KEYVAULT_ENDPOINT`, with `{vault}` in it, covers
+/// sovereign clouds and emulators.
+pub(crate) async fn fetch_secret(
+    vault: &str,
+    name: &str,
+    version: &str,
+) -> Result<String, SignalError> {
+    let (endpoint, scope) = match std::env::var("AZURE_KEYVAULT_ENDPOINT") {
+        Ok(template) => {
+            let endpoint = template.replace("{vault}", vault);
+            check_endpoint(&endpoint)?;
+            let endpoint = endpoint.trim_end_matches('/').to_string();
+            let scope = format!("{endpoint}/.default");
+            (endpoint, scope)
+        }
+        Err(_) => (
+            format!("https://{vault}.vault.azure.net"),
+            "https://vault.azure.net/.default".to_string(),
+        ),
+    };
+    let mut url = reqwest::Url::parse(&endpoint).map_err(|e| config_err(e.to_string()))?;
+    url.path_segments_mut()
+        .map_err(|_| config_err(format!("{endpoint} cannot be a base URL")))?
+        .push("secrets")
+        .push(name);
+    if !version.is_empty() {
+        url.path_segments_mut()
+            .map_err(|_| config_err(format!("{endpoint} cannot be a base URL")))?
+            .push(version);
+    }
+    url.query_pairs_mut().append_pair("api-version", "7.4");
+    let resp = client()?
+        .get(url)
+        .bearer_auth(token(&scope).await?)
+        .send()
+        .await
+        .map_err(|e| config_err(e.to_string()))?;
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| config_err(e.to_string()))?;
+    if !status.is_success() {
+        return Err(status_err(status, &bytes));
+    }
+    #[derive(serde::Deserialize)]
+    struct Secret {
+        value: Option<String>,
+    }
+    serde_json::from_slice::<Secret>(&bytes)
+        .map_err(|e| config_err(format!("unexpected Key Vault response: {e}")))?
+        .value
+        .ok_or_else(|| config_err(format!("secret '{name}' has no value")))
+}

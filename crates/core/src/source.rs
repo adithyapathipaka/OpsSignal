@@ -108,11 +108,12 @@ pub enum ConfigSource {
     },
 }
 
-/// The URL schemes each cloud's add-on serves.
+/// The URL schemes each cloud's add-on serves: config sources, then
+/// the secret stores of `${store:...}` placeholders (see `secrets`).
 pub const CLOUD_SCHEMES: [(&str, &[&str]); 3] = [
-    ("aws", &["s3", "appconfig", "dynamodb"]),
-    ("gcp", &["gs", "firestore"]),
-    ("azure", &["az", "azappconfig", "cosmos"]),
+    ("aws", &["s3", "appconfig", "dynamodb", "aws-sm"]),
+    ("gcp", &["gs", "firestore", "gcp-sm"]),
+    ("azure", &["az", "azappconfig", "cosmos", "azure-kv"]),
 ];
 
 impl fmt::Display for ConfigSource {
@@ -487,10 +488,13 @@ impl ConfigSource {
         let built_in = (cloud == "aws" && cfg!(feature = "aws"))
             || (cloud == "gcp" && cfg!(feature = "gcp"))
             || (cloud == "azure" && cfg!(feature = "azure"));
-        if built_in || registered_fetcher(self.scheme()).is_some() {
+        if built_in || has_fetcher(self.scheme()) {
             Ok(())
         } else {
-            Err(config_err(format!("{self}: {}", missing_support(self))))
+            Err(config_err(format!(
+                "{self}: {}",
+                missing_support(self.scheme())
+            )))
         }
     }
 
@@ -742,6 +746,10 @@ pub fn register_cloud_fetcher(cloud: &str, fetcher: Arc<dyn ExternalFetcher>) {
     }
 }
 
+pub(crate) fn has_fetcher(scheme: &str) -> bool {
+    registered_fetcher(scheme).is_some()
+}
+
 fn registered_fetcher(scheme: &str) -> Option<Arc<dyn ExternalFetcher>> {
     fetchers()
         .read()
@@ -750,10 +758,8 @@ fn registered_fetcher(scheme: &str) -> Option<Arc<dyn ExternalFetcher>> {
         .cloned()
 }
 
-async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError> {
-    let fetcher = registered_fetcher(scheme).ok_or_else(|| {
-        config_err(ConfigSource::parse(&url).map_or_else(|e| message(&e), |s| missing_support(&s)))
-    })?;
+pub(crate) async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError> {
+    let fetcher = registered_fetcher(scheme).ok_or_else(|| config_err(missing_support(scheme)))?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     // A plain thread rather than spawn_blocking: the fetcher may start
     // its own runtime, which tokio forbids on its blocking pool.
@@ -775,11 +781,17 @@ async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError
     }
 }
 
-fn missing_support(source: &ConfigSource) -> String {
-    let scheme = source.scheme();
-    let cloud = source.cloud().unwrap_or("aws");
+pub(crate) fn missing_support(scheme: &str) -> String {
+    let cloud = CLOUD_SCHEMES
+        .iter()
+        .find(|(_, schemes)| schemes.contains(&scheme))
+        .map_or("aws", |(cloud, _)| *cloud);
+    let what = match crate::secrets::STORES.iter().find(|(s, _)| *s == scheme) {
+        Some((_, store)) => format!("{store} secrets ({scheme}:)"),
+        None => format!("{scheme}:// configs"),
+    };
     format!(
-        "this build cannot read {scheme}:// configs; install the {cloud} add-on: \
+        "this build cannot read {what}; install the {cloud} add-on: \
          pip install 'opssignal[{cloud}]' for Python, or a CLI or C library built with \
          `--features {cloud}` (the `{cloud}` cargo feature of opssignal-core)"
     )
@@ -787,15 +799,21 @@ fn missing_support(source: &ConfigSource) -> String {
 
 /// Fetches the raw text at `url` on a throwaway runtime, with errors
 /// in the form an [`ExternalFetcher`] returns them. This is what add-on
-/// packages call to serve a request.
+/// packages call to serve a request. `url` is a config source or a
+/// secret reference without its `#field` (`aws-sm:prod/slack`).
 pub fn fetch_blocking(url: &str) -> Result<String, String> {
-    let fetched = ConfigSource::parse(url).and_then(|source| {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
-            .block_on(source.fetch_unprefixed())
-    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to start runtime: {e}"))?;
+    let is_secret = url
+        .split_once(':')
+        .is_some_and(|(scheme, _)| crate::secrets::STORES.iter().any(|(s, _)| *s == scheme));
+    let fetched = if is_secret {
+        runtime.block_on(crate::secrets::read(url))
+    } else {
+        ConfigSource::parse(url).and_then(|source| runtime.block_on(source.fetch_unprefixed()))
+    };
     fetched.map_err(|e| message(&e))
 }
 
@@ -874,8 +892,9 @@ pub(crate) struct Loaded {
     pub texts: Option<Texts>,
 }
 
-/// `(source, raw text)` for each file of a chain, in merge order.
-pub(crate) type Texts = Vec<(String, String)>;
+/// `(source, raw text, digest of its secrets)` for each file of a
+/// chain, in merge order.
+pub(crate) type Texts = Vec<(String, String, String)>;
 
 /// Initial load. A local file must exist and parse, as before. A remote
 /// file falls back to its cached copy; if the chain still can't be

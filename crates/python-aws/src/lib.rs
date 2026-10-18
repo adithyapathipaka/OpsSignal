@@ -1,5 +1,6 @@
 //! The `opssignal-aws` add-on: lets the base `opssignal` Python
-//! package read configs from AWS S3 and AppConfig (s3:// and appconfig://). The base package
+//! package read configs from AWS (s3://, appconfig://, dynamodb://) and
+//! Secrets Manager placeholders (`${aws-sm:...}`). The base package
 //! looks for this module when it builds its client and sends every
 //! fetch for those schemes to [`fetch`]; all the logic is in
 //! `opssignal-core`, compiled here with its `aws` feature.
