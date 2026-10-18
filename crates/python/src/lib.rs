@@ -6,7 +6,7 @@
 //! things fail."
 
 use opssignal_core::signal::{Severity, SignalInput};
-use opssignal_core::source::{register_fetcher, ExternalFetcher};
+use opssignal_core::source::{register_cloud_fetcher, ExternalFetcher};
 use opssignal_core::SignalClient;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -17,11 +17,12 @@ use std::sync::{Arc, OnceLock};
 /// same error instead of re-reading a broken file on each alert.
 static CLIENT: OnceLock<Result<SignalClient, String>> = OnceLock::new();
 
-/// Cloud add-ons installed as pip extras, by the URL scheme each serves.
+/// Cloud add-ons installed as pip extras. Each serves every URL scheme
+/// of its cloud (see `opssignal_core::source::CLOUD_SCHEMES`).
 const ADDONS: [(&str, &str); 3] = [
-    ("s3", "opssignal_aws"),
-    ("gs", "opssignal_gcp"),
-    ("az", "opssignal_azure"),
+    ("aws", "opssignal_aws"),
+    ("gcp", "opssignal_gcp"),
+    ("azure", "opssignal_azure"),
 ];
 
 /// Hands a core fetch request to an add-on's `fetch(url) -> str`.
@@ -41,9 +42,9 @@ impl ExternalFetcher for AddonFetcher {
 }
 
 fn register_addons(py: Python<'_>) {
-    for (scheme, module) in ADDONS {
+    for (cloud, module) in ADDONS {
         if let Ok(fetch) = py.import(module).and_then(|m| m.getattr("fetch")) {
-            register_fetcher(scheme, Arc::new(AddonFetcher(fetch.unbind())));
+            register_cloud_fetcher(cloud, Arc::new(AddonFetcher(fetch.unbind())));
         }
     }
 }

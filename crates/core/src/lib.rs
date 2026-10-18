@@ -1,10 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod chain;
+#[cfg(feature = "object-store")]
+mod cloud;
 pub mod config;
 pub mod delivery;
 pub mod providers;
 mod reload;
 pub mod routing;
+pub mod secrets;
 pub mod signal;
 pub mod sink;
 pub mod source;
@@ -83,17 +87,24 @@ impl SignalClient {
     /// without a restart. A reload that fails to fetch or parse keeps
     /// the current config, so a bad edit can't take alerting down.
     pub fn from_source(source: &ConfigSource, opts: &LoadOptions) -> Result<Self, SignalError> {
+        Self::from_sources(std::slice::from_ref(source), opts)
+    }
+
+    /// [`SignalClient::from_source`] for a layered config: `sources`
+    /// are merged lowest priority first, along with every file they
+    /// `extends`, and any of them changing triggers a reload.
+    pub fn from_sources(sources: &[ConfigSource], opts: &LoadOptions) -> Result<Self, SignalError> {
         let runtime = build_runtime()?;
-        let loaded = runtime.block_on(source::load_initial(source, opts))?;
+        let loaded = runtime.block_on(source::load_initial(sources, opts))?;
         let client = Self::with_runtime(&loaded.config, runtime)?;
         if let Some(every) = opts.refresh {
             reload::spawn(
                 &client.runtime,
                 reload::Reloader {
-                    source: source.clone(),
-                    cache: opts.cache_path(source),
+                    roots: sources.to_vec(),
+                    opts: opts.clone(),
                     every,
-                    last_text: loaded.text,
+                    last_texts: loaded.texts,
                     storage: loaded.config.storage.clone(),
                     pipeline: Arc::clone(&client.pipeline),
                 },
@@ -108,7 +119,7 @@ impl SignalClient {
     pub fn from_env() -> Result<Self, SignalError> {
         let opts = LoadOptions::from_env()?;
         match ConfigSource::discover()? {
-            Some(source) => Self::from_source(&source, &opts),
+            Some(sources) => Self::from_sources(&sources, &opts),
             None => Self::from_config(&Config::default()),
         }
     }

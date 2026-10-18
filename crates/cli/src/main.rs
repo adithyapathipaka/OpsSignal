@@ -13,8 +13,9 @@ const NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Parser)]
 #[command(name = "signal", version, about = "Operational signal SDK CLI")]
 struct Cli {
-    /// Path or URL (https://, s3://, gs://, az://) of signal.yaml. Defaults to
-    /// $SIGNAL_CONFIG, then ./signal.yaml.
+    /// Path or URL (https://, s3://, gs://, az://) of signal.yaml, or several
+    /// comma separated, lowest priority first. Defaults to $SIGNAL_CONFIG,
+    /// then ./signal.yaml.
     #[arg(long, global = true)]
     config: Option<String>,
 
@@ -100,16 +101,16 @@ fn main() {
 
 /// A one-shot command loads the config once; there is nothing to reload.
 fn build_client(config: Option<&str>) -> Result<SignalClient, opssignal_core::signal::SignalError> {
-    let source = match config {
-        Some(raw) => Some(ConfigSource::parse(raw)?),
+    let sources = match config {
+        Some(raw) => Some(ConfigSource::parse_list(raw)?),
         None => ConfigSource::discover()?,
     };
     let opts = LoadOptions {
         refresh: None,
         ..LoadOptions::from_env()?
     };
-    match source {
-        Some(source) => SignalClient::from_source(&source, &opts),
+    match sources {
+        Some(sources) => SignalClient::from_sources(&sources, &opts),
         None => SignalClient::from_config(&Config::default()),
     }
 }

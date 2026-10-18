@@ -98,8 +98,12 @@ logged and ignored, and the previous routes stay in place.
 Two kinds of change still need a rollout (`kubectl rollout restart
 deployment/my-service`):
 
-- **Secrets.** Environment variables are fixed when a container starts, so a
-  rotated Slack URL in the Secret reaches a pod only after it restarts.
+- **Secrets held in environment variables.** Environment variables are fixed
+  when a container starts, so a rotated Slack URL in the Secret reaches a pod
+  only after it restarts. A `${aws-sm:...}`, `${gcp-sm:...}` or
+  `${azure-kv:...}` placeholder reads the secret store directly and picks up a
+  rotation on its own (see
+  [Secrets from a secret store](configuration.md#secrets-from-a-secret-store)).
 - **`storage` settings**, which are never reloaded live.
 
 ## Rolling it out to every app
@@ -107,6 +111,41 @@ deployment/my-service`):
 A Helm chart or Kustomize component that adds the `env`, `envFrom`,
 `volumeMounts` and `volumes` blocks above lets every Deployment pick up
 OpsSignal without any app touching the config.
+
+## A default per cluster, a file per team
+
+A ConfigMap can hold several files. Keep the platform default and each team's
+file side by side, and point each service at its team's file, which
+[`extends`](configuration.md#layered-configs) the default:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opssignal-config
+data:
+  default.yaml: |
+    providers:
+      slack:
+        webhook_url: "${ORG_SLACK_WEBHOOK}"
+    routes:
+      - match: { severity: [error, critical] }
+        providers: [slack]
+  payments.yaml: |
+    extends: default.yaml
+    routes:
+      - match: { source: payments }
+        providers: [slack]
+```
+
+```yaml
+env:
+  - name: SIGNAL_CONFIG
+    value: /etc/opssignal/payments.yaml
+```
+
+The default can also live in a bucket while team files stay in ConfigMaps:
+`extends: s3://ops-config/prod/default.yaml`.
 
 ## Across clusters: a config in a bucket
 

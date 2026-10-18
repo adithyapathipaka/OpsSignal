@@ -110,3 +110,27 @@ def test_invalid_input_is_rejected_before_config_is_loaded(tmp_path):
     assert result.returncode == 0, result.stderr
     expected = "ValueError: invalid signal: validation failed: source must not be empty"
     assert expected in result.stdout
+
+
+def test_signal_config_lists_layered_files(tmp_path):
+    db = tmp_path / "from-default.db"
+    (tmp_path / "default.yaml").write_text(f'storage:\n  path: "{db}"\n')
+    team = tmp_path / "teams" / "etl.yaml"
+    team.parent.mkdir()
+    team.write_text("extends: ../default.yaml\n")
+    shared = tmp_path / "shared.yaml"
+    shared.write_text("routes: []\n")
+
+    result = _run_isolated(
+        """
+        from opssignal import notify
+        notify(source="pytest", event_type="check", title="t")
+        print("NOTIFY-RETURNED")
+        """,
+        {"SIGNAL_CONFIG": f"{team},{shared}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "NOTIFY-RETURNED" in result.stdout, result.stdout
+    # The sink path is only set in the inherited default.
+    assert db.exists()

@@ -4,10 +4,19 @@
 //!
 //! - `/etc/opssignal/signal.yaml` (or any path): read from disk
 //! - `https://config.example.com/signal.yaml`: plain GET
-//! - `s3://bucket/key`: needs the `s3` cargo feature
-//! - `gs://bucket/object`: needs the `gcs` cargo feature
+//! - `s3://bucket/key`: needs the `aws` cargo feature
+//! - `gs://bucket/object`: needs the `gcp` cargo feature
 //! - `az://container/blob`: needs the `azure` cargo feature; the storage
 //!   account comes from `$AZURE_STORAGE_ACCOUNT_NAME`
+//! - `appconfig://application/environment/profile`: AWS AppConfig,
+//!   needs the `aws` cargo feature
+//! - `azappconfig://store/key?label=prod`: Azure App Configuration,
+//!   needs the `azure` cargo feature
+//! - `dynamodb://table/id`: an Amazon DynamoDB item, needs `aws`
+//! - `firestore://project/collection/document`: a Firestore document,
+//!   needs `gcp`
+//! - `cosmos://account/database/container/id`: an Azure Cosmos DB item,
+//!   needs `azure`
 //!
 //! Cloud fetches use each platform's standard credential chain (IAM
 //! role / IRSA / env keys on AWS; workload identity / ADC / service
@@ -19,7 +28,12 @@
 //! secret is ever written to the cache. If the source can't be reached
 //! or returns a broken file, the last good cached copy is used instead:
 //! a bucket outage must never be the reason an alert goes missing.
+//!
+//! `$SIGNAL_CONFIG` may also list several files, comma separated, and
+//! any file may `extends:` others; see [`Config::from_layers`] for how
+//! they merge. Each remote file in the chain is cached on its own.
 
+use crate::chain::{self, Mode};
 use crate::config::{Config, CONFIG_ENV_VAR, DEFAULT_CONFIG_FILE};
 use crate::signal::SignalError;
 use sha2::{Digest, Sha256};
@@ -32,7 +46,7 @@ use std::time::Duration;
 pub const REFRESH_ENV_VAR: &str = "SIGNAL_CONFIG_REFRESH_SECS";
 pub const CACHE_DIR_ENV_VAR: &str = "SIGNAL_CONFIG_CACHE_DIR";
 pub const DEFAULT_REFRESH: Duration = Duration::from_secs(60);
-const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigSource {
@@ -51,7 +65,56 @@ pub enum ConfigSource {
         container: String,
         blob: String,
     },
+    /// An AWS AppConfig configuration profile.
+    AppConfig {
+        application: String,
+        environment: String,
+        profile: String,
+    },
+    /// One key-value of an Azure App Configuration store; no `label`
+    /// means the unlabelled value.
+    AzureAppConfig {
+        store: String,
+        key: String,
+        label: Option<String>,
+    },
+    /// A DynamoDB item, read by its string partition key (attribute
+    /// `key`, default `id`); the YAML is in attribute `value` (default
+    /// `config`).
+    DynamoDb {
+        table: String,
+        id: String,
+        key: Option<String>,
+        value: Option<String>,
+    },
+    /// A Firestore document (`collection/doc`, possibly nested); the
+    /// YAML is in string field `field` (default `config`).
+    Firestore {
+        project: String,
+        document: String,
+        database: Option<String>,
+        field: Option<String>,
+    },
+    /// A Cosmos DB item, read by id; its partition key value is `pk`, or
+    /// the id itself. The YAML is in string property `field` (default
+    /// `config`).
+    Cosmos {
+        account: String,
+        database: String,
+        container: String,
+        id: String,
+        pk: Option<String>,
+        field: Option<String>,
+    },
 }
+
+/// The URL schemes each cloud's add-on serves: config sources, then
+/// the secret stores of `${store:...}` placeholders (see `secrets`).
+pub const CLOUD_SCHEMES: [(&str, &[&str]); 3] = [
+    ("aws", &["s3", "appconfig", "dynamodb", "aws-sm"]),
+    ("gcp", &["gs", "firestore", "gcp-sm"]),
+    ("azure", &["az", "azappconfig", "cosmos", "azure-kv"]),
+];
 
 impl fmt::Display for ConfigSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -61,6 +124,44 @@ impl fmt::Display for ConfigSource {
             ConfigSource::S3 { bucket, key } => write!(f, "s3://{bucket}/{key}"),
             ConfigSource::Gcs { bucket, object } => write!(f, "gs://{bucket}/{object}"),
             ConfigSource::Azure { container, blob } => write!(f, "az://{container}/{blob}"),
+            ConfigSource::AppConfig {
+                application,
+                environment,
+                profile,
+            } => write!(f, "appconfig://{application}/{environment}/{profile}"),
+            ConfigSource::AzureAppConfig { store, key, label } => {
+                write!(f, "azappconfig://{store}/{key}")?;
+                write_query(f, &[("label", label)])
+            }
+            ConfigSource::DynamoDb {
+                table,
+                id,
+                key,
+                value,
+            } => {
+                write!(f, "dynamodb://{table}/{id}")?;
+                write_query(f, &[("key", key), ("value", value)])
+            }
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                write!(f, "firestore://{project}/{document}")?;
+                write_query(f, &[("database", database), ("field", field)])
+            }
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                id,
+                pk,
+                field,
+            } => {
+                write!(f, "cosmos://{account}/{database}/{container}/{id}")?;
+                write_query(f, &[("pk", pk), ("field", field)])
+            }
         }
     }
 }
@@ -82,6 +183,84 @@ impl ConfigSource {
             let (container, blob) = split_bucket(rest, raw)?;
             return Ok(ConfigSource::Azure { container, blob });
         }
+        if let Some(rest) = raw.strip_prefix("appconfig://") {
+            let parts: Vec<&str> = rest.split('/').collect();
+            if let [application, environment, profile] = parts[..] {
+                if ![application, environment, profile]
+                    .iter()
+                    .any(|p| p.is_empty())
+                {
+                    return Ok(ConfigSource::AppConfig {
+                        application: application.to_string(),
+                        environment: environment.to_string(),
+                        profile: profile.to_string(),
+                    });
+                }
+            }
+            return Err(config_err(format!(
+                "{raw}: expected appconfig://<application>/<environment>/<configuration profile>"
+            )));
+        }
+        if let Some(rest) = raw.strip_prefix("azappconfig://") {
+            let (path, [label]) = split_query(rest, raw, ["label"])?;
+            let (store, key) = split_bucket(path, raw)?;
+            return Ok(ConfigSource::AzureAppConfig { store, key, label });
+        }
+        if let Some(rest) = raw.strip_prefix("dynamodb://") {
+            let (path, [key, value]) = split_query(rest, raw, ["key", "value"])?;
+            return match path.split_once('/') {
+                Some((table, id)) if !table.is_empty() && !id.is_empty() && !id.contains('/') => {
+                    Ok(ConfigSource::DynamoDb {
+                        table: table.to_string(),
+                        id: id.to_string(),
+                        key,
+                        value,
+                    })
+                }
+                _ => Err(config_err(format!(
+                    "{raw}: expected dynamodb://<table>/<item id>"
+                ))),
+            };
+        }
+        if let Some(rest) = raw.strip_prefix("firestore://") {
+            let (path, [database, field]) = split_query(rest, raw, ["database", "field"])?;
+            let (project, document) = split_bucket(path, raw)?;
+            let segments: Vec<&str> = document.split('/').collect();
+            if !segments.len().is_multiple_of(2) || segments.iter().any(|s| s.is_empty()) {
+                return Err(config_err(format!(
+                    "{raw}: expected firestore://<project>/<collection>/<document>"
+                )));
+            }
+            return Ok(ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            });
+        }
+        if let Some(rest) = raw.strip_prefix("cosmos://") {
+            let (path, [pk, field]) = split_query(rest, raw, ["pk", "field"])?;
+            let parts: Vec<&str> = path.split('/').collect();
+            return match parts[..] {
+                [account, database, container, id]
+                    if ![account, database, container, id]
+                        .iter()
+                        .any(|p| p.is_empty()) =>
+                {
+                    Ok(ConfigSource::Cosmos {
+                        account: account.to_string(),
+                        database: database.to_string(),
+                        container: container.to_string(),
+                        id: id.to_string(),
+                        pk,
+                        field,
+                    })
+                }
+                _ => Err(config_err(format!(
+                    "{raw}: expected cosmos://<account>/<database>/<container>/<item id>"
+                ))),
+            };
+        }
         if raw.starts_with("https://") {
             return Ok(ConfigSource::Http(raw.to_string()));
         }
@@ -102,30 +281,200 @@ impl ConfigSource {
         }
         if raw.contains("://") {
             return Err(config_err(format!(
-                "{raw}: unsupported scheme (use a local path, https://, s3://, gs:// or az://)"
+                "{raw}: unsupported scheme (use a local path, https://, s3://, gs://, az://, \
+                 appconfig://, azappconfig://, dynamodb://, firestore:// or cosmos://)"
             )));
         }
         Ok(ConfigSource::File(PathBuf::from(raw)))
     }
 
+    /// Parses a `$SIGNAL_CONFIG` value that lists one or more files,
+    /// comma separated, lowest priority first.
+    pub fn parse_list(raw: &str) -> Result<Vec<Self>, SignalError> {
+        let sources = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(Self::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        if sources.is_empty() {
+            return Err(config_err(format!("'{raw}' names no config file")));
+        }
+        Ok(sources)
+    }
+
     /// `$SIGNAL_CONFIG` if set, else `./signal.yaml` if it exists. A
     /// local `$SIGNAL_CONFIG` path that is not a file is an error rather
     /// than a silent fall back to defaults.
-    pub fn discover() -> Result<Option<Self>, SignalError> {
+    pub fn discover() -> Result<Option<Vec<Self>>, SignalError> {
         if let Some(raw) = std::env::var_os(CONFIG_ENV_VAR) {
-            let source = Self::parse(&raw.to_string_lossy())?;
-            if let ConfigSource::File(path) = &source {
-                if !path.is_file() {
-                    return Err(config_err(format!(
-                        "${CONFIG_ENV_VAR} points to {}, which is not a file",
-                        path.display()
-                    )));
+            let sources = Self::parse_list(&raw.to_string_lossy())?;
+            for source in &sources {
+                if let ConfigSource::File(path) = source {
+                    if !path.is_file() {
+                        return Err(config_err(format!(
+                            "${CONFIG_ENV_VAR} points to {}, which is not a file",
+                            path.display()
+                        )));
+                    }
                 }
             }
-            return Ok(Some(source));
+            return Ok(Some(sources));
         }
         let local = PathBuf::from(DEFAULT_CONFIG_FILE);
-        Ok(local.is_file().then_some(ConfigSource::File(local)))
+        Ok(local.is_file().then(|| vec![ConfigSource::File(local)]))
+    }
+
+    /// Resolves an `extends` entry of this file. A URL or an absolute
+    /// path is taken as is; anything else is relative to this file's
+    /// own location, in the same bucket, container or directory.
+    ///
+    /// A remote file may only extend other remote files: a config
+    /// served over the network must not be able to read local paths.
+    pub fn join(&self, reference: &str) -> Result<Self, SignalError> {
+        let reference = reference.trim();
+        let absolute = reference.contains("://") || Path::new(reference).is_absolute();
+        let joined = match self {
+            _ if absolute => Self::parse(reference)?,
+            ConfigSource::File(path) => ConfigSource::File(normalize(
+                &path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(reference),
+            )),
+            ConfigSource::Http(url) => {
+                let joined = reqwest::Url::parse(url)
+                    .and_then(|base| base.join(reference))
+                    .map_err(|e| {
+                        config_err(format!("{self}: cannot resolve '{reference}': {e}"))
+                    })?;
+                Self::parse(joined.as_str())?
+            }
+            ConfigSource::S3 { bucket, key } => ConfigSource::S3 {
+                bucket: bucket.clone(),
+                key: self.join_key(key, reference)?,
+            },
+            ConfigSource::Gcs { bucket, object } => ConfigSource::Gcs {
+                bucket: bucket.clone(),
+                object: self.join_key(object, reference)?,
+            },
+            ConfigSource::Azure { container, blob } => ConfigSource::Azure {
+                container: container.clone(),
+                blob: self.join_key(blob, reference)?,
+            },
+            // Profiles have flat names: a relative entry names another
+            // profile of the same application and environment.
+            ConfigSource::AppConfig {
+                application,
+                environment,
+                ..
+            } => {
+                if reference.is_empty() || reference.contains('/') {
+                    return Err(config_err(format!(
+                        "{self}: '{reference}' is not a profile name; use a full appconfig:// URL"
+                    )));
+                }
+                ConfigSource::AppConfig {
+                    application: application.clone(),
+                    environment: environment.clone(),
+                    profile: reference.to_string(),
+                }
+            }
+            // Keys are often path-like (`opssignal/teams/payments`), so
+            // they resolve like paths, keeping the label.
+            ConfigSource::AzureAppConfig { store, key, label } => ConfigSource::AzureAppConfig {
+                store: store.clone(),
+                key: self.join_key(key, reference)?,
+                label: label.clone(),
+            },
+            // Another item of the same table, read the same way.
+            ConfigSource::DynamoDb {
+                table, key, value, ..
+            } => ConfigSource::DynamoDb {
+                table: table.clone(),
+                id: self.flat_name(reference)?,
+                key: key.clone(),
+                value: value.clone(),
+            },
+            // Document paths resolve like paths, in the same database.
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                let document = self.join_key(document, reference)?;
+                if !document.split('/').count().is_multiple_of(2) {
+                    return Err(config_err(format!(
+                        "{self}: '{reference}' is a collection, not a document"
+                    )));
+                }
+                ConfigSource::Firestore {
+                    project: project.clone(),
+                    document,
+                    database: database.clone(),
+                    field: field.clone(),
+                }
+            }
+            // Another item of the same container. Its partition key is
+            // assumed to be its id; use a full URL with ?pk= otherwise.
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                field,
+                ..
+            } => ConfigSource::Cosmos {
+                account: account.clone(),
+                database: database.clone(),
+                container: container.clone(),
+                id: self.flat_name(reference)?,
+                pk: None,
+                field: field.clone(),
+            },
+        };
+        if self.is_remote() && !joined.is_remote() {
+            return Err(config_err(format!(
+                "{self}: a remote config cannot extend the local file {joined}"
+            )));
+        }
+        Ok(joined)
+    }
+
+    /// A relative `extends` entry that names a sibling item.
+    fn flat_name(&self, reference: &str) -> Result<String, SignalError> {
+        if reference.is_empty() || reference.contains('/') || reference.contains('?') {
+            return Err(config_err(format!(
+                "{self}: '{reference}' is not an item id; use a full {}:// URL",
+                self.scheme()
+            )));
+        }
+        Ok(reference.to_string())
+    }
+
+    /// `reference` resolved against the "directory" of object `key`.
+    fn join_key(&self, key: &str, reference: &str) -> Result<String, SignalError> {
+        let mut parts: Vec<&str> = key.split('/').collect();
+        parts.pop();
+        for segment in reference.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return Err(config_err(format!(
+                            "{self}: '{reference}' points outside the bucket"
+                        )));
+                    }
+                }
+                name => parts.push(name),
+            }
+        }
+        if parts.is_empty() {
+            return Err(config_err(format!(
+                "{self}: '{reference}' does not name a file"
+            )));
+        }
+        Ok(parts.join("/"))
     }
 
     /// Whether this build can read the source at all, either natively
@@ -133,17 +482,46 @@ impl ConfigSource {
     /// install problem, not an outage, so it fails loudly instead of
     /// falling back.
     pub fn check_supported(&self) -> Result<(), SignalError> {
-        let (scheme, built_in) = match self {
-            ConfigSource::File(_) | ConfigSource::Http(_) => return Ok(()),
-            ConfigSource::S3 { .. } => ("s3", cfg!(feature = "s3")),
-            ConfigSource::Gcs { .. } => ("gs", cfg!(feature = "gcs")),
-            ConfigSource::Azure { .. } => ("az", cfg!(feature = "azure")),
+        let Some(cloud) = self.cloud() else {
+            return Ok(());
         };
-        if built_in || registered_fetcher(scheme).is_some() {
+        let built_in = (cloud == "aws" && cfg!(feature = "aws"))
+            || (cloud == "gcp" && cfg!(feature = "gcp"))
+            || (cloud == "azure" && cfg!(feature = "azure"));
+        if built_in || has_fetcher(self.scheme()) {
             Ok(())
         } else {
-            Err(config_err(format!("{self}: {}", missing_support(scheme))))
+            Err(config_err(format!(
+                "{self}: {}",
+                missing_support(self.scheme())
+            )))
         }
+    }
+
+    /// The URL scheme, or `file` for a local path.
+    pub fn scheme(&self) -> &'static str {
+        match self {
+            ConfigSource::File(_) => "file",
+            ConfigSource::Http(url) if url.starts_with("http://") => "http",
+            ConfigSource::Http(_) => "https",
+            ConfigSource::S3 { .. } => "s3",
+            ConfigSource::Gcs { .. } => "gs",
+            ConfigSource::Azure { .. } => "az",
+            ConfigSource::AppConfig { .. } => "appconfig",
+            ConfigSource::AzureAppConfig { .. } => "azappconfig",
+            ConfigSource::DynamoDb { .. } => "dynamodb",
+            ConfigSource::Firestore { .. } => "firestore",
+            ConfigSource::Cosmos { .. } => "cosmos",
+        }
+    }
+
+    /// The cloud whose add-on reads this source, if any.
+    pub fn cloud(&self) -> Option<&'static str> {
+        let scheme = self.scheme();
+        CLOUD_SCHEMES
+            .iter()
+            .find(|(_, schemes)| schemes.contains(&scheme))
+            .map(|(cloud, _)| *cloud)
     }
 
     pub fn is_remote(&self) -> bool {
@@ -154,7 +532,7 @@ impl ConfigSource {
     pub async fn fetch(&self) -> Result<String, SignalError> {
         self.fetch_unprefixed()
             .await
-            .map_err(|e| config_err(format!("{self}: {}", strip_prefix(&e))))
+            .map_err(|e| config_err(format!("{self}: {}", message(&e))))
     }
 
     /// [`ConfigSource::fetch`] without the source named in the error,
@@ -165,11 +543,141 @@ impl ConfigSource {
                 .await
                 .map_err(|e| config_err(format!("cannot read {}: {e}", path.display()))),
             ConfigSource::Http(url) => fetch_http(url).await,
-            ConfigSource::S3 { bucket, key } => fetch_s3(bucket, key).await,
-            ConfigSource::Gcs { bucket, object } => fetch_gcs(bucket, object).await,
-            ConfigSource::Azure { container, blob } => fetch_azure(container, blob).await,
+            _ => self.fetch_cloud().await,
         }
     }
+
+    /// A cloud source, from this build or from its add-on.
+    async fn fetch_cloud(&self) -> Result<String, SignalError> {
+        match self {
+            #[cfg(feature = "aws")]
+            ConfigSource::S3 { bucket, key } => crate::cloud::aws::fetch_s3(bucket, key).await,
+            #[cfg(feature = "aws")]
+            ConfigSource::AppConfig {
+                application,
+                environment,
+                profile,
+            } => crate::cloud::aws::fetch_appconfig(application, environment, profile).await,
+            #[cfg(feature = "aws")]
+            ConfigSource::DynamoDb {
+                table,
+                id,
+                key,
+                value,
+            } => {
+                crate::cloud::aws::fetch_dynamodb(table, id, key.as_deref(), value.as_deref()).await
+            }
+            #[cfg(feature = "gcp")]
+            ConfigSource::Gcs { bucket, object } => {
+                crate::cloud::gcp::fetch_gcs(bucket, object).await
+            }
+            #[cfg(feature = "gcp")]
+            ConfigSource::Firestore {
+                project,
+                document,
+                database,
+                field,
+            } => {
+                crate::cloud::gcp::fetch_firestore(
+                    project,
+                    document,
+                    database.as_deref(),
+                    field.as_deref(),
+                )
+                .await
+            }
+            #[cfg(feature = "azure")]
+            ConfigSource::Cosmos {
+                account,
+                database,
+                container,
+                id,
+                pk,
+                field,
+            } => {
+                crate::cloud::azure::fetch_cosmos(
+                    account,
+                    database,
+                    container,
+                    id,
+                    pk.as_deref(),
+                    field.as_deref(),
+                )
+                .await
+            }
+            #[cfg(feature = "azure")]
+            ConfigSource::Azure { container, blob } => {
+                crate::cloud::azure::fetch_blob(container, blob).await
+            }
+            #[cfg(feature = "azure")]
+            ConfigSource::AzureAppConfig { store, key, label } => {
+                crate::cloud::azure::fetch_app_config(store, key, label.as_deref()).await
+            }
+            _ => fetch_external(self.scheme(), self.to_string()).await,
+        }
+    }
+}
+
+/// Drops `.` and folds `..` into its parent without touching the disk,
+/// so two teams reaching one shared file by different relative paths
+/// load it once.
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Splits `path?a=1&b=2` into the path and the values of `allowed`, in
+/// that order. Unknown or repeated parameters are errors, so a typo
+/// can't silently read the wrong item.
+fn split_query<'a, const N: usize>(
+    rest: &'a str,
+    raw: &str,
+    allowed: [&str; N],
+) -> Result<(&'a str, [Option<String>; N]), SignalError> {
+    let mut values: [Option<String>; N] = std::array::from_fn(|_| None);
+    let Some((path, query)) = rest.split_once('?') else {
+        return Ok((rest, values));
+    };
+    for pair in query.split('&') {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let slot = allowed.iter().position(|a| *a == name);
+        match slot {
+            Some(i) if values[i].is_none() && !value.is_empty() => {
+                values[i] = Some(value.to_string());
+            }
+            _ => {
+                let allowed: Vec<String> = allowed.iter().map(|a| format!("{a}=")).collect();
+                return Err(config_err(format!(
+                    "{raw}: unexpected '{pair}' (allowed once each, with a value: {})",
+                    allowed.join(", ")
+                )));
+            }
+        }
+    }
+    Ok((path, values))
+}
+
+fn write_query(f: &mut fmt::Formatter<'_>, pairs: &[(&str, &Option<String>)]) -> fmt::Result {
+    let mut sep = '?';
+    for (name, value) in pairs {
+        if let Some(value) = value {
+            write!(f, "{sep}{name}={value}")?;
+            sep = '&';
+        }
+    }
+    Ok(())
 }
 
 fn split_bucket(rest: &str, raw: &str) -> Result<(String, String), SignalError> {
@@ -199,170 +707,6 @@ async fn fetch_http(url: &str) -> Result<String, SignalError> {
     resp.text().await.map_err(|e| config_err(e.to_string()))
 }
 
-/// Lets object_store run its requests (including credential and token
-/// lookups) on the crate's existing reqwest 0.12 client. Config files
-/// are small, so bodies are buffered rather than streamed.
-#[cfg(feature = "object-store")]
-#[derive(Debug)]
-struct ReqwestConnector;
-
-#[cfg(feature = "object-store")]
-impl object_store::client::HttpConnector for ReqwestConnector {
-    fn connect(
-        &self,
-        options: &object_store::ClientOptions,
-    ) -> object_store::Result<object_store::client::HttpClient> {
-        // object_store refuses plain http unless allowed (it allows it
-        // for metadata and token endpoints, or when AWS_ALLOW_HTTP and
-        // friends are set); keep that rule with our own client.
-        let allow_http = options
-            .get_config_value(&object_store::ClientConfigKey::AllowHttp)
-            .is_some_and(|v| v == "true");
-        let client = reqwest::Client::builder()
-            .timeout(FETCH_TIMEOUT)
-            .https_only(!allow_http)
-            .build()
-            .map_err(|e| object_store::Error::Generic {
-                store: "opssignal",
-                source: Box::new(e),
-            })?;
-        Ok(object_store::client::HttpClient::new(ReqwestService(
-            client,
-        )))
-    }
-}
-
-#[cfg(feature = "object-store")]
-#[derive(Debug)]
-struct ReqwestService(reqwest::Client);
-
-#[cfg(feature = "object-store")]
-#[async_trait::async_trait]
-impl object_store::client::HttpService for ReqwestService {
-    async fn call(
-        &self,
-        req: object_store::client::HttpRequest,
-    ) -> Result<object_store::client::HttpResponse, object_store::client::HttpError> {
-        use object_store::client::{HttpError, HttpErrorKind, HttpResponseBody};
-
-        let (parts, body) = req.into_parts();
-        let body = match body.as_bytes() {
-            Some(bytes) => bytes.clone(),
-            None if body.is_empty() => bytes::Bytes::new(),
-            None => {
-                return Err(HttpError::new_boxed(
-                    HttpErrorKind::Request,
-                    "streaming request bodies are not supported".into(),
-                ))
-            }
-        };
-        let url = reqwest::Url::parse(&parts.uri.to_string())
-            .map_err(|e| HttpError::new(HttpErrorKind::Request, e))?;
-        let mut request = reqwest::Request::new(parts.method, url);
-        *request.headers_mut() = parts.headers;
-        *request.body_mut() = Some(body.into());
-
-        let kind = |e: &reqwest::Error| {
-            if e.is_timeout() {
-                HttpErrorKind::Timeout
-            } else if e.is_connect() {
-                HttpErrorKind::Connect
-            } else {
-                HttpErrorKind::Request
-            }
-        };
-        let resp = self
-            .0
-            .execute(request)
-            .await
-            .map_err(|e| HttpError::new(kind(&e), e))?;
-        let mut out = http::Response::builder().status(resp.status());
-        if let Some(headers) = out.headers_mut() {
-            *headers = resp.headers().clone();
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| HttpError::new(HttpErrorKind::Decode, e))?;
-        out.body(HttpResponseBody::from(bytes))
-            .map_err(|e| HttpError::new(HttpErrorKind::Interrupted, e))
-    }
-}
-
-#[cfg(feature = "object-store")]
-async fn fetch_object(
-    store: impl object_store::ObjectStore,
-    path: &str,
-) -> Result<String, SignalError> {
-    use object_store::ObjectStoreExt;
-    let get = async {
-        let bytes = store
-            .get(&object_store::path::Path::from(path))
-            .await?
-            .bytes()
-            .await?;
-        Ok::<_, object_store::Error>(bytes)
-    };
-    let bytes = tokio::time::timeout(FETCH_TIMEOUT, get)
-        .await
-        .map_err(|_| config_err(format!("timed out after {FETCH_TIMEOUT:?}")))?
-        .map_err(|e| config_err(e.to_string()))?;
-    String::from_utf8(bytes.to_vec()).map_err(|_| config_err("config is not valid UTF-8"))
-}
-
-#[cfg(feature = "s3")]
-async fn fetch_s3(bucket: &str, key: &str) -> Result<String, SignalError> {
-    // from_env picks up AWS_REGION, AWS_ENDPOINT_URL, static keys,
-    // web identity (EKS IRSA), ECS task roles and EC2 instance profiles.
-    let store = object_store::aws::AmazonS3Builder::from_env()
-        .with_bucket_name(bucket)
-        .with_http_connector(ReqwestConnector)
-        .build()
-        .map_err(|e| config_err(e.to_string()))?;
-    fetch_object(store, key).await
-}
-
-#[cfg(not(feature = "s3"))]
-async fn fetch_s3(bucket: &str, key: &str) -> Result<String, SignalError> {
-    fetch_external("s3", format!("s3://{bucket}/{key}")).await
-}
-
-#[cfg(feature = "gcs")]
-async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
-    // from_env picks up GOOGLE_SERVICE_ACCOUNT / GOOGLE_APPLICATION_CREDENTIALS,
-    // gcloud application-default credentials, then the metadata server
-    // (GKE workload identity, GCE service accounts).
-    let store = object_store::gcp::GoogleCloudStorageBuilder::from_env()
-        .with_bucket_name(bucket)
-        .with_http_connector(ReqwestConnector)
-        .build()
-        .map_err(|e| config_err(e.to_string()))?;
-    fetch_object(store, object).await
-}
-
-#[cfg(not(feature = "gcs"))]
-async fn fetch_gcs(bucket: &str, object: &str) -> Result<String, SignalError> {
-    fetch_external("gs", format!("gs://{bucket}/{object}")).await
-}
-
-#[cfg(feature = "azure")]
-async fn fetch_azure(container: &str, blob: &str) -> Result<String, SignalError> {
-    // from_env picks up AZURE_STORAGE_ACCOUNT_NAME plus an account key,
-    // SAS token, service principal, AKS workload identity
-    // (AZURE_FEDERATED_TOKEN_FILE), then the managed identity endpoint.
-    let store = object_store::azure::MicrosoftAzureBuilder::from_env()
-        .with_container_name(container)
-        .with_http_connector(ReqwestConnector)
-        .build()
-        .map_err(|e| config_err(e.to_string()))?;
-    fetch_object(store, blob).await
-}
-
-#[cfg(not(feature = "azure"))]
-async fn fetch_azure(container: &str, blob: &str) -> Result<String, SignalError> {
-    fetch_external("az", format!("az://{container}/{blob}")).await
-}
-
 /// Reads one URL scheme for a build that was compiled without it.
 ///
 /// Language bindings register these at runtime from add-on packages
@@ -381,13 +725,29 @@ fn fetchers() -> &'static FetcherRegistry {
     FETCHERS.get_or_init(Default::default)
 }
 
-/// Registers `fetcher` for `scheme` (`s3`, `gs` or `az`), replacing any
+/// Registers `fetcher` for one URL scheme (such as `s3`), replacing any
 /// earlier one. A scheme compiled into this build ignores it.
 pub fn register_fetcher(scheme: &str, fetcher: Arc<dyn ExternalFetcher>) {
     fetchers()
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .insert(scheme.to_string(), fetcher);
+}
+
+/// Registers `fetcher` for every scheme of `cloud` (`aws`, `gcp` or
+/// `azure`; see [`CLOUD_SCHEMES`]). This is what an add-on package does.
+pub fn register_cloud_fetcher(cloud: &str, fetcher: Arc<dyn ExternalFetcher>) {
+    for (name, schemes) in CLOUD_SCHEMES {
+        if name == cloud {
+            for scheme in schemes {
+                register_fetcher(scheme, Arc::clone(&fetcher));
+            }
+        }
+    }
+}
+
+pub(crate) fn has_fetcher(scheme: &str) -> bool {
+    registered_fetcher(scheme).is_some()
 }
 
 fn registered_fetcher(scheme: &str) -> Option<Arc<dyn ExternalFetcher>> {
@@ -398,11 +758,7 @@ fn registered_fetcher(scheme: &str) -> Option<Arc<dyn ExternalFetcher>> {
         .cloned()
 }
 
-#[cfg_attr(
-    all(feature = "s3", feature = "gcs", feature = "azure"),
-    allow(dead_code)
-)]
-async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError> {
+pub(crate) async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError> {
     let fetcher = registered_fetcher(scheme).ok_or_else(|| config_err(missing_support(scheme)))?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     // A plain thread rather than spawn_blocking: the fetcher may start
@@ -425,31 +781,40 @@ async fn fetch_external(scheme: &str, url: String) -> Result<String, SignalError
     }
 }
 
-fn missing_support(scheme: &str) -> String {
-    let (extra, feature) = match scheme {
-        "s3" => ("aws", "s3"),
-        "gs" => ("gcp", "gcs"),
-        _ => ("azure", "azure"),
+pub(crate) fn missing_support(scheme: &str) -> String {
+    let cloud = CLOUD_SCHEMES
+        .iter()
+        .find(|(_, schemes)| schemes.contains(&scheme))
+        .map_or("aws", |(cloud, _)| *cloud);
+    let what = match crate::secrets::STORES.iter().find(|(s, _)| *s == scheme) {
+        Some((_, store)) => format!("{store} secrets ({scheme}:)"),
+        None => format!("{scheme}:// configs"),
     };
     format!(
-        "this build cannot read {scheme}:// configs; install the {extra} add-on: \
-         pip install 'opssignal[{extra}]' for Python, a CLI or C library built with \
-         `--features {extra}`, or the `{feature}` cargo feature of opssignal-core"
+        "this build cannot read {what}; install the {cloud} add-on: \
+         pip install 'opssignal[{cloud}]' for Python, or a CLI or C library built with \
+         `--features {cloud}` (the `{cloud}` cargo feature of opssignal-core)"
     )
 }
 
 /// Fetches the raw text at `url` on a throwaway runtime, with errors
 /// in the form an [`ExternalFetcher`] returns them. This is what add-on
-/// packages call to serve a request.
+/// packages call to serve a request. `url` is a config source or a
+/// secret reference without its `#field` (`aws-sm:prod/slack`).
 pub fn fetch_blocking(url: &str) -> Result<String, String> {
-    let fetched = ConfigSource::parse(url).and_then(|source| {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
-            .block_on(source.fetch_unprefixed())
-    });
-    fetched.map_err(|e| strip_prefix(&e))
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to start runtime: {e}"))?;
+    let is_secret = url
+        .split_once(':')
+        .is_some_and(|(scheme, _)| crate::secrets::STORES.iter().any(|(s, _)| *s == scheme));
+    let fetched = if is_secret {
+        runtime.block_on(crate::secrets::read(url))
+    } else {
+        ConfigSource::parse(url).and_then(|source| runtime.block_on(source.fetch_unprefixed()))
+    };
+    fetched.map_err(|e| message(&e))
 }
 
 /// How a client loads and refreshes its config.
@@ -520,69 +885,72 @@ fn default_cache_dir() -> Option<PathBuf> {
     Some(base.join("opssignal"))
 }
 
-/// The config a client starts with, plus the raw text it came from so
-/// the reloader can tell when the source has changed.
+/// The config a client starts with, plus the raw text of every file it
+/// was built from so the reloader can tell when one has changed.
 pub(crate) struct Loaded {
     pub config: Config,
-    pub text: Option<String>,
+    pub texts: Option<Texts>,
 }
 
+/// `(source, raw text, digest of its secrets)` for each file of a
+/// chain, in merge order.
+pub(crate) type Texts = Vec<(String, String, String)>;
+
 /// Initial load. A local file must exist and parse, as before. A remote
-/// source falls back to the cached copy, then to the zero-config
-/// default, logging why, so that startup never fails on a network blip.
+/// file falls back to its cached copy; if the chain still can't be
+/// built, the client starts on the zero-config default, logging why, so
+/// that startup never fails on a network blip.
 pub(crate) async fn load_initial(
-    source: &ConfigSource,
+    roots: &[ConfigSource],
     opts: &LoadOptions,
 ) -> Result<Loaded, SignalError> {
-    source.check_supported()?;
-    if !source.is_remote() {
-        let text = source.fetch().await?;
-        let config = parse(source, &text)?;
-        return Ok(Loaded {
-            config,
-            text: Some(text),
-        });
+    for root in roots {
+        root.check_supported()?;
     }
-
-    let cache = opts.cache_path(source);
-    let fresh = match source.fetch().await {
-        Ok(text) => parse(source, &text).map(|config| (config, text)),
+    let built = match chain::walk(roots, Mode::Startup(opts)).await {
+        Ok(files) => chain::merge(&files).map(|config| (config, files)),
         Err(e) => Err(e),
     };
-    match fresh {
-        Ok((config, text)) => {
-            if let Some(path) = &cache {
-                write_cache(path, &text);
+    let built = match built {
+        Ok(built) => Ok(built),
+        // Every file fetched, but together they don't make a valid
+        // config (say a remote team file now routes to a provider
+        // nobody configures). The cached copies did, last time.
+        Err(e) if !e.fatal && opts.cache_dir.is_some() => {
+            match chain::walk(roots, Mode::CacheOnly(opts)).await {
+                Ok(files) => match chain::merge(&files) {
+                    Ok(config) => {
+                        tracing::warn!("{}; using the cached copies", e.err);
+                        Ok((config, files))
+                    }
+                    Err(_) => Err(e),
+                },
+                Err(_) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
+    };
+    match built {
+        Ok((config, files)) => {
+            for (fetched, _) in &files {
+                if let Some(path) = opts.cache_path(&fetched.source) {
+                    write_cache(&path, &fetched.text);
+                }
             }
             Ok(Loaded {
                 config,
-                text: Some(text),
+                texts: Some(chain::texts(&files)),
             })
         }
+        Err(e) if e.fatal => Err(e.err),
         Err(e) => {
-            if let Some(path) = &cache {
-                if let Ok(text) = std::fs::read_to_string(path) {
-                    match parse(source, &text) {
-                        Ok(config) => {
-                            tracing::warn!("{e}; using the cached copy from {}", path.display());
-                            return Ok(Loaded {
-                                config,
-                                text: Some(text),
-                            });
-                        }
-                        Err(cache_err) => tracing::warn!(
-                            "cached config at {} is unusable: {cache_err}",
-                            path.display()
-                        ),
-                    }
-                }
-            }
             tracing::error!(
-                "{e}; no usable cached copy, starting with the default config (console only)"
+                "{}; no usable cached copy, starting with the default config (console only)",
+                e.err
             );
             Ok(Loaded {
                 config: Config::default(),
-                text: None,
+                texts: None,
             })
         }
     }
@@ -591,18 +959,14 @@ pub(crate) async fn load_initial(
 /// [`load_initial`] on a throwaway runtime, for callers that are not
 /// async and have no client runtime yet.
 pub(crate) fn load_blocking(
-    source: &ConfigSource,
+    roots: &[ConfigSource],
     opts: &LoadOptions,
 ) -> Result<Loaded, SignalError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| SignalError::Internal(format!("failed to start runtime: {e}")))?
-        .block_on(load_initial(source, opts))
-}
-
-pub(crate) fn parse(source: &ConfigSource, text: &str) -> Result<Config, SignalError> {
-    Config::from_yaml_str(text).map_err(|e| config_err(format!("{source}: {}", strip_prefix(&e))))
+        .block_on(load_initial(roots, opts))
 }
 
 /// Write-then-rename so a crash mid-write never leaves a truncated
@@ -626,7 +990,8 @@ fn config_err(msg: impl Into<String>) -> SignalError {
     SignalError::Config(msg.into())
 }
 
-fn strip_prefix(e: &SignalError) -> String {
+/// The message of a config error, without the "config error:" prefix.
+pub(crate) fn message(e: &SignalError) -> String {
     match e {
         SignalError::Config(msg) => msg.clone(),
         other => other.to_string(),
@@ -709,6 +1074,215 @@ mod tests {
     }
 
     #[test]
+    fn extends_resolves_against_the_parent_location() {
+        let join = |base: &str, reference: &str| {
+            ConfigSource::parse(base)
+                .expect("valid source")
+                .join(reference)
+                .map(|s| s.to_string())
+        };
+        assert_eq!(
+            join("s3://b/teams/payments.yaml", "../default.yaml").expect("joined"),
+            "s3://b/default.yaml"
+        );
+        assert_eq!(
+            join("gs://b/teams/a.yaml", "./shared/db.yaml").expect("joined"),
+            "gs://b/teams/shared/db.yaml"
+        );
+        assert_eq!(
+            join("az://c/a.yaml", "s3://other/x.yaml").expect("joined"),
+            "s3://other/x.yaml"
+        );
+        assert_eq!(
+            join("https://cfg.test/teams/a.yaml", "../default.yaml").expect("joined"),
+            "https://cfg.test/default.yaml"
+        );
+        assert_eq!(
+            join("/etc/opssignal/teams/a.yaml", "../default.yaml").expect("joined"),
+            "/etc/opssignal/default.yaml"
+        );
+        assert_eq!(join("a.yaml", "../x.yaml").expect("joined"), "../x.yaml");
+        assert!(join("s3://b/a.yaml", "../../x.yaml").is_err());
+        assert!(join("s3://b/a.yaml", "/etc/passwd").is_err());
+        assert!(join("https://cfg.test/a.yaml", "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn parses_managed_config_sources() {
+        assert_eq!(
+            ConfigSource::parse("appconfig://opssignal/prod/payments").expect("valid source"),
+            ConfigSource::AppConfig {
+                application: "opssignal".into(),
+                environment: "prod".into(),
+                profile: "payments".into()
+            }
+        );
+        assert_eq!(
+            ConfigSource::parse("azappconfig://ops/opssignal/teams/a?label=prod")
+                .expect("valid source"),
+            ConfigSource::AzureAppConfig {
+                store: "ops".into(),
+                key: "opssignal/teams/a".into(),
+                label: Some("prod".into())
+            }
+        );
+        for bad in [
+            "appconfig://app/env",
+            "appconfig://app//profile",
+            "appconfig://a/b/c/d",
+            "azappconfig://store-only",
+            "azappconfig://s/k?x=1",
+            "azappconfig://s/k?label=",
+        ] {
+            assert!(ConfigSource::parse(bad).is_err(), "{bad}");
+        }
+        for raw in [
+            "appconfig://a/b/c",
+            "azappconfig://s/k/x",
+            "azappconfig://s/k?label=dev",
+        ] {
+            assert_eq!(ConfigSource::parse(raw).expect("valid").to_string(), raw);
+        }
+        assert_eq!(
+            ConfigSource::parse("appconfig://a/b/c")
+                .expect("valid")
+                .cloud(),
+            Some("aws")
+        );
+        assert_eq!(
+            ConfigSource::parse("azappconfig://s/k")
+                .expect("valid")
+                .cloud(),
+            Some("azure")
+        );
+    }
+
+    #[test]
+    fn managed_config_extends_stay_in_the_same_store() {
+        let app = ConfigSource::parse("appconfig://ops/prod/payments").expect("valid");
+        assert_eq!(
+            app.join("default").expect("joined").to_string(),
+            "appconfig://ops/prod/default"
+        );
+        assert!(app.join("../default").is_err());
+        let kv =
+            ConfigSource::parse("azappconfig://ops/opssignal/teams/a?label=prod").expect("valid");
+        assert_eq!(
+            kv.join("../default").expect("joined").to_string(),
+            "azappconfig://ops/opssignal/default?label=prod"
+        );
+    }
+
+    #[test]
+    fn parses_database_sources() {
+        assert_eq!(
+            ConfigSource::parse("dynamodb://cfg/payments?key=team&value=yaml")
+                .expect("valid source"),
+            ConfigSource::DynamoDb {
+                table: "cfg".into(),
+                id: "payments".into(),
+                key: Some("team".into()),
+                value: Some("yaml".into())
+            }
+        );
+        assert_eq!(
+            ConfigSource::parse("firestore://proj/teams/a/configs/main").expect("valid source"),
+            ConfigSource::Firestore {
+                project: "proj".into(),
+                document: "teams/a/configs/main".into(),
+                database: None,
+                field: None
+            }
+        );
+        assert_eq!(
+            ConfigSource::parse("cosmos://acct/db/coll/payments?pk=team-a").expect("valid"),
+            ConfigSource::Cosmos {
+                account: "acct".into(),
+                database: "db".into(),
+                container: "coll".into(),
+                id: "payments".into(),
+                pk: Some("team-a".into()),
+                field: None
+            }
+        );
+        for bad in [
+            "dynamodb://table-only",
+            "dynamodb://t/a/b",
+            "dynamodb://t/a?key=",
+            "dynamodb://t/a?colour=red",
+            "dynamodb://t/a?key=x&key=y",
+            "firestore://proj/collection-only",
+            "firestore://proj/a//b",
+            "cosmos://acct/db/coll",
+            "cosmos://acct/db/coll/id/extra",
+        ] {
+            assert!(ConfigSource::parse(bad).is_err(), "{bad}");
+        }
+        for raw in [
+            "dynamodb://t/a",
+            "dynamodb://t/a?key=k&value=v",
+            "firestore://p/c/d?database=x&field=f",
+            "cosmos://a/d/c/i?pk=p&field=f",
+        ] {
+            assert_eq!(ConfigSource::parse(raw).expect("valid").to_string(), raw);
+        }
+        for (raw, cloud) in [
+            ("dynamodb://t/a", "aws"),
+            ("firestore://p/c/d", "gcp"),
+            ("cosmos://a/d/c/i", "azure"),
+        ] {
+            assert_eq!(
+                ConfigSource::parse(raw).expect("valid").cloud(),
+                Some(cloud)
+            );
+        }
+    }
+
+    #[test]
+    fn database_extends_stay_in_the_same_table() {
+        let join = |base: &str, reference: &str| {
+            ConfigSource::parse(base)
+                .expect("valid source")
+                .join(reference)
+                .map(|s| s.to_string())
+        };
+        assert_eq!(
+            join("dynamodb://cfg/payments?key=team", "default").expect("joined"),
+            "dynamodb://cfg/default?key=team"
+        );
+        assert!(join("dynamodb://cfg/payments", "a/b").is_err());
+        assert_eq!(
+            join("firestore://p/opssignal/payments?database=x", "default").expect("joined"),
+            "firestore://p/opssignal/default?database=x"
+        );
+        assert_eq!(
+            join("firestore://p/teams/a/configs/main", "../../b/configs/main").expect("joined"),
+            "firestore://p/teams/b/configs/main"
+        );
+        assert!(join("firestore://p/teams/a/configs/main", "../x").is_err());
+        assert_eq!(
+            join("cosmos://a/d/c/payments?pk=team-a&field=f", "default").expect("joined"),
+            "cosmos://a/d/c/default?field=f"
+        );
+    }
+
+    #[test]
+    fn a_config_list_is_comma_separated() {
+        let list = ConfigSource::parse_list(" a.yaml, s3://b/k.yaml ,").expect("valid list");
+        assert_eq!(
+            list,
+            [
+                ConfigSource::File("a.yaml".into()),
+                ConfigSource::S3 {
+                    bucket: "b".into(),
+                    key: "k.yaml".into()
+                }
+            ]
+        );
+        assert!(ConfigSource::parse_list(" , ").is_err());
+    }
+
+    #[test]
     fn cache_path_is_per_source_and_only_for_remote_sources() {
         let opts = LoadOptions {
             refresh: None,
@@ -724,21 +1298,21 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "s3"))]
+    #[cfg(not(feature = "aws"))]
     #[tokio::test]
     async fn s3_without_the_feature_or_an_add_on_says_how_to_get_it() {
         let source = ConfigSource::parse("s3://b/k").expect("valid source");
         let err = source.check_supported().expect_err("unsupported");
         assert!(err.to_string().contains("opssignal[aws]"));
-        assert!(err.to_string().contains("`s3` cargo feature"));
+        assert!(err.to_string().contains("`aws` cargo feature"));
         let err = source.fetch().await.expect_err("must be rejected");
         assert!(err.to_string().contains("opssignal[aws]"));
     }
 
-    #[cfg(not(feature = "gcs"))]
+    #[cfg(not(feature = "gcp"))]
     struct Fixed(&'static str);
 
-    #[cfg(not(feature = "gcs"))]
+    #[cfg(not(feature = "gcp"))]
     impl ExternalFetcher for Fixed {
         fn fetch(&self, url: &str) -> Result<String, String> {
             Ok(format!("{}{url}", self.0))
@@ -755,7 +1329,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "gcs"))]
+    #[cfg(not(feature = "gcp"))]
     #[tokio::test]
     async fn a_registered_add_on_serves_its_scheme() {
         let source = ConfigSource::parse("gs://b/k.yaml").expect("valid source");
