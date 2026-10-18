@@ -36,13 +36,24 @@ extra that installs a small native add-on, which `opssignal` finds on its own:
 | `pip install 'opssignal[all]'` | all three |
 
 If `SIGNAL_CONFIG` names a cloud whose extra isn't installed, the first
-`notify()` raises `RuntimeError` naming the extra to install. That is treated
+`notify()` raises `RuntimeError` naming the extra to install (the CLI exits
+with code 2 and names the feature to build with). That is treated
 as a setup mistake, so it fails straight away instead of falling back.
 
-The CLI and the C library are built with all three clouds. If you depend on
-the `opssignal-core` crate directly, turn them on with
-`features = ["s3", "gcs", "azure"]`; without them the core reads files and
-HTTPS only.
+The CLI and the C library follow the same rule: the base build reads local
+files and HTTPS only, and each cloud is added on top of it with a cargo
+feature named like the pip extra:
+
+| Build | Adds |
+|---|---|
+| `cargo build -p opssignal-cli --features aws` | `s3://` |
+| `cargo build -p opssignal-cli --features gcp` | `gs://` |
+| `cargo build -p opssignal-cli --features azure` | `az://` |
+| `cargo build -p opssignal-cli --features all` | all three |
+
+The same features exist on `opssignal-ffi` for the C library. If you depend on
+the `opssignal-core` crate directly, the features are `s3`, `gcs` and `azure`;
+without them the core reads files and HTTPS only.
 
 ## Remote configs
 
