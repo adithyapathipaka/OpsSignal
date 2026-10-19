@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Core of OpsSignal: turns application events into routed operational signals (Slack, webhooks, console)"
+readme = "../../README.md"
+keywords = ["notifications", "alerting", "slack", "webhook", "observability"]
+categories = ["development-tools", "api-bindings"]
 
 [lib]
 name = "opssignal_core"

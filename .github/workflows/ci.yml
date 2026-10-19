@@ -105,11 +105,13 @@ jobs:
       - name: Install dev tools
         run: uv sync --dev
       - name: ruff lint
-        run: uv run ruff check python/opssignal python/tests python/addons
+        run: uv run ruff check python/opssignal python/tests python/addons scripts
       - name: ruff format check
-        run: uv run ruff format --check python/opssignal python/tests python/addons
+        run: uv run ruff format --check python/opssignal python/tests python/addons scripts
       - name: bandit security scan
         run: uv run bandit -r python/opssignal/ python/addons/ -ll
+      - name: Package versions agree
+        run: uv run --no-project --python 3.12 scripts/check_versions.py
 
   claude-md-integrity:
     name: Check CLAUDE.md for hidden unicode

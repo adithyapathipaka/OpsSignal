@@ -4,13 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Command-line tool for OpsSignal: send routed operational signals from scripts and pipelines"
+readme = "../../README.md"
+keywords = ["notifications", "alerting", "slack", "webhook", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "opssignal"
 path = "src/main.rs"
 
 [dependencies]
-opssignal-core = { path = "../core" }
+opssignal-core = { path = "../core", version = "=0.1.0" }
 clap = { version = "4", features = ["derive"] }
 
 [features]

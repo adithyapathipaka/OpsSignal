@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+# Ships as prebuilt wheels on PyPI, not on crates.io.
+publish = false
 
 # The opssignal-aws wheel, installed by `pip install 'opssignal[aws]'`.
 

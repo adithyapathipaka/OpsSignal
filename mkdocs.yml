@@ -33,6 +33,7 @@ nav:
   - Kubernetes: kubernetes.md
   - CLI: cli.md
   - Architecture: ARCHITECTURE.md
+  - Releasing: releasing.md
   - API reference: reference.md
 
 markdown_extensions:
