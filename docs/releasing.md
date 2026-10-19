@@ -68,24 +68,27 @@ crates.io only allows trusted publishing for crates that already exist.
 
 ## Cutting a release
 
-1. Bump the version everywhere it appears and check they agree:
+1. Tag the commit on `main` you want to release and push the tag:
 
     ```bash
-    python3 scripts/check_versions.py
+    git tag v0.2.0
+    git push origin v0.2.0
     ```
 
-    That covers `Cargo.toml` (`[workspace.package]` and the `opssignal-core`
-    pin in `crates/cli`), the four `pyproject.toml` files, the extras pins in
-    `python/pyproject.toml`, and `opssignal.__version__`.
+    The tag sets the version. Before building, the workflow runs
+    `scripts/set_version.py` to write `0.2.0` into `Cargo.toml`
+    (`[workspace.package]` and the `opssignal-core` pin in `crates/cli`),
+    the four `pyproject.toml` files, the extras pins in
+    `python/pyproject.toml`, and `opssignal.__version__`, then
+    `scripts/check_versions.py` confirms they all agree. You don't need a
+    version-bump commit. Tags must be plain `vX.Y.Z`; anything else stops
+    the run before it builds.
 
-2. Merge to `main`, then tag and push:
+    The change is made only inside the release run. The files on `main`
+    keep their old version, so `main` doesn't show which version was last
+    released; the tags do.
 
-    ```bash
-    git tag v0.1.0
-    git push origin v0.1.0
-    ```
-
-3. Approve the `pypi` and `crates-io` deployments in the Actions run.
+2. Approve the `pypi` and `crates-io` deployments in the Actions run.
 
 The run uploads the three add-ons first, then `opssignal` (its extras pin
 the add-ons, so they must exist first), then `opssignal-core` and
@@ -105,6 +108,6 @@ on either registry, even after it is yanked or deleted.
   tag, and tag again.
 - **After some uploads**: use **Re-run failed jobs** on the same run. Both
   publish jobs skip anything already uploaded, so a re-run picks up where
-  it stopped. If the fix needs a code change, bump to the next patch
+  it stopped. If the fix needs a code change, tag the next patch
   version and release that instead. Yank a broken version with `cargo yank`
   or PyPI's **Yank** button rather than deleting it.
