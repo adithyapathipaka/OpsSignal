@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a vX.Y.Z tag builds every package, tests the wheels, and then
-# publishes:
+# Pushing a vX.Y.Z tag writes X.Y.Z into every package's version (see
+# scripts/set_version.py), builds every package, tests the wheels, and
+# then publishes:
 #   PyPI:      opssignal-aws, opssignal-gcp, opssignal-azure, then opssignal
 #   crates.io: opssignal-core, then opssignal-cli
 # and attaches the same files to a GitHub release.
@@ -20,6 +21,7 @@ on:
       - python/pyproject.toml
       - python/addons/*/pyproject.toml
       - scripts/check_versions.py
+      - scripts/set_version.py
 
 concurrency:
   group: release-${{ github.ref }}
@@ -37,8 +39,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Check package versions (and the tag, on a release)
         run: python scripts/check_versions.py ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      # Off a tag, prove set_version.py still finds every version it
+      # must rewrite, so the next release doesn't find out instead.
+      - name: Try setting a version
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          python scripts/set_version.py 99.0.0
+          python scripts/check_versions.py v99.0.0
 
   # The wheels are abi3 (pyo3 abi3-py39), so one wheel per platform covers
   # every CPython from 3.9 up.
@@ -65,6 +78,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -84,6 +101,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python3 scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Build sdists
         run: |
           pipx install 'maturin>=1.5,<2.0'
@@ -133,10 +154,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python3 scripts/set_version.py "$GITHUB_REF_NAME"
       # Packages both crates and builds them from the packaged sources,
       # as crates.io will see them; opssignal-cli resolves its
       # opssignal-core dependency from the local package.
-      - run: cargo publish --dry-run -p opssignal-core -p opssignal-cli
+      # --allow-dirty: on a release the version was just written into the tree.
+      - run: cargo publish --dry-run --allow-dirty -p opssignal-core -p opssignal-cli
 
   publish-pypi:
     name: Publish to PyPI
@@ -190,6 +216,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python3 scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Get a crates.io token by trusted publishing
         id: auth
         if: env.FIRST_RELEASE_TOKEN == ''
@@ -203,7 +233,7 @@ jobs:
             if curl -sf -A "opssignal-release ($GITHUB_REPOSITORY)" "https://crates.io/api/v1/crates/$crate/$version" > /dev/null; then
               echo "$crate $version is already on crates.io, skipping"
             else
-              cargo publish -p "$crate"
+              cargo publish --allow-dirty -p "$crate"
             fi
           done
         env:
