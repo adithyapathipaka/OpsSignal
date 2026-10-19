@@ -1,8 +1,8 @@
 name: CI
 
+# Tests run on pull requests only, not on pushes to main: branch
+# protection requires "Tests passed" before a PR can merge.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 # A new push to the same branch cancels the run it replaces.
