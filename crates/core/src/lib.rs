@@ -25,8 +25,8 @@ use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
 use inflight::InFlight;
 use providers::{
-    console::ConsoleProvider, pagerduty::PagerDutyProvider, slack::SlackProvider,
-    teams::TeamsProvider, webhook::WebhookProvider,
+    console::ConsoleProvider, opsgenie::OpsgenieProvider, pagerduty::PagerDutyProvider,
+    slack::SlackProvider, teams::TeamsProvider, webhook::WebhookProvider,
 };
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
@@ -75,6 +75,16 @@ impl Pipeline {
             providers.insert(
                 "teams".to_string(),
                 Arc::new(TeamsProvider::new(teams.webhook_url.clone())),
+            );
+        }
+        if let Some(opsgenie) = &config.providers.opsgenie {
+            providers.insert(
+                "opsgenie".to_string(),
+                Arc::new(OpsgenieProvider::new(
+                    opsgenie.api_key.clone(),
+                    opsgenie.url.clone(),
+                    opsgenie.tags.clone(),
+                )),
             );
         }
         Pipeline {
@@ -906,6 +916,43 @@ mod tests {
 
         assert_eq!(result.status, DeliveryStatus::Delivered);
         assert_eq!(result.provider.as_deref(), Some("teams"));
+        server_rt.block_on(server.verify());
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn failed_opsgenie_falls_back_to_slack() {
+        let server_rt = tokio::runtime::Runtime::new().expect("server runtime");
+        let server = server_rt.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/og"))
+                .respond_with(ResponseTemplate::new(422))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/slack"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&server)
+                .await;
+            server
+        });
+
+        let db = temp_db();
+        let uri = server.uri();
+        let yaml = format!(
+            "providers:\n  opsgenie:\n    api_key: k\n    url: \"{uri}/og\"\n  slack:\n    webhook_url: \"{uri}/slack\"\nroutes:\n  - match:\n      severity: [error]\n    providers: [opsgenie, slack]\nstorage:\n  path: \"{db}\"\n"
+        );
+        let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
+            .expect("client");
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(30))
+            .expect("notify_sync");
+
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("slack"));
         server_rt.block_on(server.verify());
         let _ = std::fs::remove_file(&db);
     }

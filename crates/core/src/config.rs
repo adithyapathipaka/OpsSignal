@@ -151,6 +151,8 @@ pub struct ProvidersConfig {
     pub pagerduty: Option<PagerDutyConfig>,
     #[serde(default)]
     pub teams: Option<TeamsConfig>,
+    #[serde(default)]
+    pub opsgenie: Option<OpsgenieConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -188,6 +190,21 @@ pub struct PagerDutyConfig {
 pub struct TeamsConfig {
     /// Workflows (or legacy incoming) webhook URL of a Teams channel.
     pub webhook_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpsgenieConfig {
+    /// Key of an API integration on an Opsgenie team.
+    pub api_key: String,
+    /// Alert API endpoint; defaults to the US one. EU accounts set
+    /// `https://api.eu.opsgenie.com/v2/alerts`.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Added to every alert, before the signal's severity and
+    /// environment.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -259,6 +276,7 @@ impl Config {
             config.providers.webhook = p.webhook.or(config.providers.webhook.take());
             config.providers.pagerduty = p.pagerduty.or(config.providers.pagerduty.take());
             config.providers.teams = p.teams.or(config.providers.teams.take());
+            config.providers.opsgenie = p.opsgenie.or(config.providers.opsgenie.take());
             if let Some(storage) = layer.storage {
                 config.storage = storage;
             }
@@ -313,6 +331,9 @@ impl Config {
         }
         if self.providers.teams.is_some() {
             names.push("teams");
+        }
+        if self.providers.opsgenie.is_some() {
+            names.push("opsgenie");
         }
         names
     }
@@ -630,6 +651,27 @@ mod tests {
             config.providers.teams.expect("teams").webhook_url,
             "https://example.test/org"
         );
+    }
+
+    #[test]
+    fn opsgenie_parses_with_tags_and_an_eu_endpoint() {
+        let yaml = "providers:\n  opsgenie:\n    api_key: K3Y\n    url: https://api.eu.opsgenie.com/v2/alerts\n    tags: [data, etl]\nroutes:\n  - match:\n      severity: [critical]\n    providers: [opsgenie]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let og = config.providers.opsgenie.as_ref().expect("opsgenie");
+        assert_eq!(og.api_key, "K3Y");
+        assert_eq!(
+            og.url.as_deref(),
+            Some("https://api.eu.opsgenie.com/v2/alerts")
+        );
+        assert_eq!(og.tags, vec!["data", "etl"]);
+        assert_eq!(config.provider_names(), vec!["console", "opsgenie"]);
+    }
+
+    #[test]
+    fn opsgenie_without_an_api_key_is_rejected() {
+        let yaml = "providers:\n  opsgenie:\n    tags: [data]\n";
+        let err = Config::from_yaml_str(yaml).expect_err("api_key is required");
+        assert!(err.to_string().contains("api_key"), "{err}");
     }
 
     #[test]
