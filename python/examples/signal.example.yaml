@@ -16,6 +16,8 @@ providers:
   #   routing_key: "${PAGERDUTY_ROUTING_KEY}"
   # teams:
   #   webhook_url: "${TEAMS_WEBHOOK_URL}"
+  # opsgenie:
+  #   api_key: "${OPSGENIE_API_KEY}"
   # email:
   #   from: "OpsSignal <alerts@example.com>"
   #   to: [data-oncall@example.com]
