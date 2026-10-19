@@ -25,8 +25,9 @@ use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
 use inflight::InFlight;
 use providers::{
-    console::ConsoleProvider, opsgenie::OpsgenieProvider, pagerduty::PagerDutyProvider,
-    slack::SlackProvider, teams::TeamsProvider, webhook::WebhookProvider,
+    console::ConsoleProvider, email::EmailProvider, opsgenie::OpsgenieProvider,
+    pagerduty::PagerDutyProvider, slack::SlackProvider, teams::TeamsProvider,
+    webhook::WebhookProvider,
 };
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
@@ -85,6 +86,12 @@ impl Pipeline {
                     opsgenie.url.clone(),
                     opsgenie.tags.clone(),
                 )),
+            );
+        }
+        if let Some(email) = &config.providers.email {
+            providers.insert(
+                "email".to_string(),
+                Arc::new(EmailProvider::new(email.clone())),
             );
         }
         Pipeline {
