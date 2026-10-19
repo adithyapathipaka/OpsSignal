@@ -286,3 +286,43 @@ pub(crate) async fn fetch_secret(id: &str) -> Result<String, SignalError> {
         .secret_string
         .ok_or_else(|| config_err("the secret is binary; store it as a string"))
 }
+
+/// Sends a raw MIME message through the SES v2 `SendEmail` API. The
+/// recipients come from the message's own headers.
+pub(crate) async fn send_ses_raw(
+    region: Option<&str>,
+    configuration_set: Option<&str>,
+    raw: &[u8],
+) -> Result<(), SignalError> {
+    use base64::Engine;
+
+    let region = region.map_or_else(self::region, str::to_string);
+    // The shared helpers report config errors; here they are failed sends.
+    let delivery = |e: SignalError| match e {
+        SignalError::Config(msg) | SignalError::Delivery(msg) => {
+            SignalError::Delivery(format!("ses: {msg}"))
+        }
+        other => other,
+    };
+    let base = endpoint("SESV2", "email", &region).map_err(delivery)?;
+    let mut body = serde_json::json!({
+        "Content": { "Raw": { "Data": base64::engine::general_purpose::STANDARD.encode(raw) } },
+    });
+    if let Some(set) = configuration_set {
+        body["ConfigurationSetName"] = set.into();
+    }
+    let (status, _, bytes) = call(
+        "ses",
+        &region,
+        http::Method::POST,
+        &format!("{base}/v2/email/outbound-emails"),
+        &[("content-type", "application/json")],
+        body.to_string().into_bytes(),
+    )
+    .await
+    .map_err(delivery)?;
+    if !status.is_success() {
+        return Err(delivery(status_err(status, &bytes)));
+    }
+    Ok(())
+}

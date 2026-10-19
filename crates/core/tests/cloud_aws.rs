@@ -14,12 +14,102 @@ async fn aws_config_services() {
     let server = MockServer::start().await;
     std::env::set_var("AWS_ENDPOINT_URL_APPCONFIGDATA", server.uri());
     std::env::set_var("AWS_ENDPOINT_URL_DYNAMODB", server.uri());
+    std::env::set_var("AWS_ENDPOINT_URL_SESV2", server.uri());
     std::env::set_var("AWS_ACCESS_KEY_ID", "AKIDTEST");
     std::env::set_var("AWS_SECRET_ACCESS_KEY", "secret");
     std::env::set_var("AWS_REGION", "eu-west-1");
 
     appconfig_reuses_its_polling_session_and_renews_it(&server).await;
     dynamodb_reads_one_attribute_of_one_item(&server).await;
+    ses_sends_the_email_as_a_signed_raw_message(&server).await;
+}
+
+async fn ses_sends_the_email_as_a_signed_raw_message(server: &MockServer) {
+    use base64::Engine;
+    use opssignal_core::config::Config;
+    use opssignal_core::delivery::Provider;
+    use opssignal_core::providers::email::EmailProvider;
+    use opssignal_core::signal::{Severity, Signal, SignalInput};
+
+    Mock::given(method("POST"))
+        .and(path("/v2/email/outbound-emails"))
+        .and(header("content-type", "application/json"))
+        // Signed for SES in the configured region, not AWS_REGION.
+        .and(header_regex(
+            "authorization",
+            r"^AWS4-HMAC-SHA256 Credential=AKIDTEST/\d{8}/us-west-2/ses/aws4_request",
+        ))
+        .and(body_partial_json(serde_json::json!({
+            "ConfigurationSetName": "alerts",
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"MessageId": "m1"})),
+        )
+        .expect(1)
+        .named("ses send")
+        .mount(server)
+        .await;
+
+    let config = Config::from_yaml_str(
+        "providers:\n  email:\n    from: \"OpsSignal <alerts@example.test>\"\n    to: [oncall@example.test]\n    ses:\n      region: us-west-2\n      configuration_set: alerts\n",
+    )
+    .expect("config");
+    let signal = Signal::from_input(SignalInput {
+        source: "dbt".into(),
+        event_type: "dbt_model_failed".into(),
+        title: "dbt model failed: orders".into(),
+        severity: Severity::Error,
+        ..Default::default()
+    });
+    EmailProvider::new(config.providers.email.expect("email"))
+        .send(&signal)
+        .await
+        .expect("SES accepted it");
+
+    let requests = server.received_requests().await.expect("recorded");
+    let sent = requests
+        .iter()
+        .find(|r| r.url.path() == "/v2/email/outbound-emails")
+        .expect("ses request");
+    let body: serde_json::Value = serde_json::from_slice(&sent.body).expect("json");
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(body["Content"]["Raw"]["Data"].as_str().expect("raw data"))
+        .expect("base64");
+    let raw = String::from_utf8(raw).expect("utf8");
+    assert!(
+        raw.contains("Subject: [ERROR] dbt model failed: orders"),
+        "{raw}"
+    );
+    assert!(raw.contains("To: oncall@example.test"), "{raw}");
+    assert!(raw.contains("References: <"), "{raw}");
+
+    // A rejected send is a delivery error with SES's reason. Signed for
+    // AWS_REGION this time, so the mock above doesn't match it.
+    Mock::given(method("POST"))
+        .and(path("/v2/email/outbound-emails"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"message":"Email address is not verified."}"#),
+        )
+        .mount(server)
+        .await;
+    let err = EmailProvider::new(
+        Config::from_yaml_str(
+            "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    ses: {}\n",
+        )
+        .expect("config")
+        .providers
+        .email
+        .expect("email"),
+    )
+    .send(&signal)
+    .await
+    .expect_err("400 must fail");
+    assert!(matches!(
+        err,
+        opssignal_core::signal::SignalError::Delivery(_)
+    ));
+    assert!(err.to_string().contains("not verified"), "{err}");
 }
 
 async fn appconfig_reuses_its_polling_session_and_renews_it(server: &MockServer) {

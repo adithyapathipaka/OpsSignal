@@ -1,4 +1,4 @@
-use crate::config::{EmailConfig, SmtpConfig, SmtpTls};
+use crate::config::{EmailConfig, EmailTransport, SesConfig, SmtpConfig, SmtpTls};
 use crate::delivery::Provider;
 use crate::signal::{Signal, SignalError};
 use lettre::message::{header::ContentType, Mailbox, MessageBuilder};
@@ -11,7 +11,8 @@ use std::time::Duration;
 /// so a server that hangs costs one attempt rather than the retry loop.
 const SMTP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Sends a plain-text email through an SMTP server. Repeats of the same
+/// Sends a plain-text email through an SMTP server or, in a build with
+/// AWS support, the Amazon SES API. Repeats of the same
 /// signal keep the same subject and `References` header, so mail
 /// clients thread them into one conversation instead of filling the
 /// inbox.
@@ -137,12 +138,43 @@ impl Provider for EmailProvider {
     }
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
-        let message = self.message_for(signal)?;
-        Self::transport(&self.config.smtp)?
-            .send(message)
-            .await
-            .map_err(|e| SignalError::Delivery(format!("smtp: {e}")))?;
-        Ok(())
+        match self.config.transport() {
+            Some(EmailTransport::Smtp(smtp)) => {
+                let message = self.message_for(signal)?;
+                Self::transport(smtp)?
+                    .send(message)
+                    .await
+                    .map_err(|e| SignalError::Delivery(format!("smtp: {e}")))?;
+                Ok(())
+            }
+            Some(EmailTransport::Ses(ses)) => self.send_ses(ses, signal).await,
+            None => Err(SignalError::Delivery(
+                "email needs exactly one of smtp and ses".into(),
+            )),
+        }
+    }
+}
+
+impl EmailProvider {
+    /// The same MIME message as over SMTP, so threading headers and
+    /// formatting don't depend on the transport.
+    #[cfg(feature = "aws")]
+    async fn send_ses(&self, ses: &SesConfig, signal: &Signal) -> Result<(), SignalError> {
+        let raw = self.message_for(signal)?.formatted();
+        crate::cloud::aws::send_ses_raw(
+            ses.region.as_deref(),
+            ses.configuration_set.as_deref(),
+            &raw,
+        )
+        .await
+    }
+
+    /// No AWS code in this build: the `opssignal[aws]` add-on sends it.
+    #[cfg(not(feature = "aws"))]
+    async fn send_ses(&self, _ses: &SesConfig, signal: &Signal) -> Result<(), SignalError> {
+        let config_json = serde_json::to_string(&self.config)
+            .map_err(|e| SignalError::Delivery(e.to_string()))?;
+        super::external::send_external("aws", "email", config_json, signal).await
     }
 }
 
@@ -175,13 +207,14 @@ mod tests {
             to: vec!["oncall@example.test".into()],
             cc: vec!["data@example.test".into()],
             subject_prefix: Some("[opssignal]".into()),
-            smtp: SmtpConfig {
+            smtp: Some(SmtpConfig {
                 host: "127.0.0.1".into(),
                 port: Some(port),
                 username: Some("user".into()),
                 password: Some("pass".into()),
                 tls: SmtpTls::None,
-            },
+            }),
+            ses: None,
         }
     }
 
@@ -345,5 +378,47 @@ mod tests {
             .await
             .expect_err("nothing listening");
         assert!(matches!(err, SignalError::Delivery(_)));
+    }
+
+    /// One test: the sender registry is process-wide, so "not installed"
+    /// has to be checked before the fake add-on registers.
+    #[cfg(not(feature = "aws"))]
+    #[tokio::test]
+    async fn ses_without_aws_goes_to_the_registered_add_on() {
+        use super::super::external::{register_cloud_sender, ExternalSender};
+
+        let ses_yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    ses:\n      region: eu-west-1\n";
+        let err = crate::config::Config::from_yaml_str(ses_yaml).expect_err("no add-on yet");
+        assert!(err.to_string().contains("opssignal[aws]"), "{err}");
+
+        type Calls = Arc<Mutex<Vec<(String, String, String)>>>;
+        struct FakeAddon(Calls);
+        impl ExternalSender for FakeAddon {
+            fn send(&self, provider: &str, config: &str, signal: &str) -> Result<(), String> {
+                self.0
+                    .lock()
+                    .expect("calls")
+                    .push((provider.into(), config.into(), signal.into()));
+                Ok(())
+            }
+        }
+        let calls: Calls = Default::default();
+        register_cloud_sender("aws", Arc::new(FakeAddon(Arc::clone(&calls))));
+
+        let config = crate::config::Config::from_yaml_str(ses_yaml).expect("add-on registered");
+        let email = config.providers.email.expect("email");
+        let signal = signal(Severity::Error);
+        EmailProvider::new(email).send(&signal).await.expect("sent");
+
+        let calls = calls.lock().expect("calls");
+        let (provider, config_json, signal_json) = &calls[0];
+        assert_eq!(provider, "email");
+        let config: EmailConfig = serde_json::from_str(config_json).expect("config json");
+        assert_eq!(
+            config.ses.expect("ses").region.as_deref(),
+            Some("eu-west-1")
+        );
+        let sent: Signal = serde_json::from_str(signal_json).expect("signal json");
+        assert_eq!(sent.id, signal.id);
     }
 }

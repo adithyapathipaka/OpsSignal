@@ -17,7 +17,7 @@
 use crate::routing::{Route, RoutingConfig};
 use crate::signal::SignalError;
 use crate::source::{self, ConfigSource, LoadOptions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -192,7 +192,9 @@ pub struct TeamsConfig {
     pub webhook_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// Serialize as well, so a build without the AWS feature can hand the
+/// config to the `opssignal[aws]` add-on.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmailConfig {
     /// Sender, as `alerts@example.com` or `OpsSignal <alerts@example.com>`.
@@ -204,10 +206,32 @@ pub struct EmailConfig {
     /// Put before the subject, such as `[opssignal]`, for mail filters.
     #[serde(default)]
     pub subject_prefix: Option<String>,
-    pub smtp: SmtpConfig,
+    /// Send through an SMTP server. Exactly one of `smtp` and `ses`.
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
+    /// Send through the Amazon SES API with the AWS credential chain;
+    /// needs the `aws` add-on.
+    #[serde(default)]
+    pub ses: Option<SesConfig>,
+}
+
+/// How an [`EmailConfig`] sends.
+pub enum EmailTransport<'a> {
+    Smtp(&'a SmtpConfig),
+    Ses(&'a SesConfig),
 }
 
 impl EmailConfig {
+    /// The transport; [`EmailConfig::check`] makes sure there is
+    /// exactly one.
+    pub fn transport(&self) -> Option<EmailTransport<'_>> {
+        match (&self.smtp, &self.ses) {
+            (Some(smtp), None) => Some(EmailTransport::Smtp(smtp)),
+            (None, Some(ses)) => Some(EmailTransport::Ses(ses)),
+            _ => None,
+        }
+    }
+
     /// Addresses are checked at load time, since a bad one would fail
     /// every send.
     fn check(&self) -> Result<(), SignalError> {
@@ -220,16 +244,45 @@ impl EmailConfig {
                 config_err(format!("providers.email: invalid address {address:?}: {e}"))
             })?;
         }
-        if self.smtp.username.is_some() != self.smtp.password.is_some() {
-            return Err(config_err(
-                "providers.email.smtp needs both username and password, or neither",
-            ));
+        match self.transport() {
+            Some(EmailTransport::Smtp(smtp)) => {
+                if smtp.username.is_some() != smtp.password.is_some() {
+                    return Err(config_err(
+                        "providers.email.smtp needs both username and password, or neither",
+                    ));
+                }
+            }
+            Some(EmailTransport::Ses(_)) => {
+                if !crate::providers::external::cloud_supported("aws") {
+                    return Err(config_err(format!(
+                        "providers.email: {}",
+                        crate::providers::external::missing_support("email over Amazon SES", "aws")
+                    )));
+                }
+            }
+            None => {
+                return Err(config_err(
+                    "providers.email needs exactly one of smtp and ses",
+                ))
+            }
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SesConfig {
+    /// Defaults to `AWS_REGION`, then `AWS_DEFAULT_REGION`, then
+    /// `us-east-1`.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// SES configuration set, for event publishing and dedicated IPs.
+    #[serde(default)]
+    pub configuration_set: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SmtpConfig {
     pub host: String,
@@ -255,7 +308,7 @@ impl SmtpConfig {
 }
 
 /// How the SMTP connection is secured.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SmtpTls {
     /// Plain connection upgraded with STARTTLS, which must succeed.
@@ -723,8 +776,9 @@ mod tests {
         let email = config.providers.email.as_ref().expect("email");
         assert_eq!(email.to, vec!["oncall@example.test"]);
         assert!(email.cc.is_empty());
-        assert_eq!(email.smtp.tls, SmtpTls::Starttls);
-        assert_eq!(email.smtp.port(), 587);
+        let smtp = email.smtp.as_ref().expect("smtp");
+        assert_eq!(smtp.tls, SmtpTls::Starttls);
+        assert_eq!(smtp.port(), 587);
         assert_eq!(config.provider_names(), vec!["console", "email"]);
     }
 
@@ -732,7 +786,7 @@ mod tests {
     fn email_tls_modes_parse() {
         let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: relay.internal\n      tls: none\n";
         let config = Config::from_yaml_str(yaml).expect("config");
-        let smtp = &config.providers.email.expect("email").smtp;
+        let smtp = config.providers.email.expect("email").smtp.expect("smtp");
         assert_eq!(smtp.tls, SmtpTls::None);
         assert_eq!(smtp.port(), 25);
     }
@@ -756,6 +810,26 @@ mod tests {
         let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: h\n      username: u\n";
         let err = Config::from_yaml_str(yaml).expect_err("half credentials");
         assert!(err.to_string().contains("password"), "{err}");
+    }
+
+    #[test]
+    fn email_needs_exactly_one_transport() {
+        let neither = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n";
+        let err = Config::from_yaml_str(neither).expect_err("no transport");
+        assert!(err.to_string().contains("exactly one"), "{err}");
+        let both = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: h\n    ses: {}\n";
+        let err = Config::from_yaml_str(both).expect_err("two transports");
+        assert!(err.to_string().contains("exactly one"), "{err}");
+    }
+
+    #[cfg(feature = "aws")]
+    #[test]
+    fn email_over_ses_parses_in_an_aws_build() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    ses:\n      region: eu-west-1\n      configuration_set: alerts\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let ses = config.providers.email.expect("email").ses.expect("ses");
+        assert_eq!(ses.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(ses.configuration_set.as_deref(), Some("alerts"));
     }
 
     #[test]
