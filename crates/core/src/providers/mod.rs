@@ -1,4 +1,5 @@
 pub mod console;
+pub mod email;
 pub mod opsgenie;
 pub mod pagerduty;
 pub mod slack;

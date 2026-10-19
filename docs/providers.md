@@ -13,6 +13,7 @@ the file with `${VAR}` or a secret reference such as `${aws-sm:prod/opssignal#pd
 | [PagerDuty](#pagerduty) | `pagerduty` | `routing_key` | `url` |
 | [Microsoft Teams](#microsoft-teams) | `teams` | `webhook_url` | none |
 | [Opsgenie](#opsgenie) | `opsgenie` | `api_key` | `url`, `tags` |
+| [Email](#email) | `email` | `from`, `to`, `smtp.host` | `cc`, `subject_prefix`, `smtp.port`, `smtp.username`, `smtp.password`, `smtp.tls` |
 
 All providers are in the base package; none needs a cloud extra.
 
@@ -165,3 +166,61 @@ alerts; it does not acknowledge or close them.
 Atlassian is folding Opsgenie into Jira Service Management. Its operations
 alert API takes the same request, so a migrated team can point `url` at the
 endpoint shown on its JSM API integration and keep the rest of the config.
+## Email
+
+```yaml
+providers:
+  email:
+    from: "OpsSignal <alerts@example.com>"
+    to: [data-oncall@example.com]
+    cc: [data-platform@example.com]     # optional
+    subject_prefix: "[opssignal]"       # optional
+    smtp:
+      host: smtp.example.com
+      username: "${SMTP_USERNAME}"
+      password: "${SMTP_PASSWORD}"
+      # tls: starttls (default, port 587) | tls (port 465) | none (port 25)
+      # port: 2587
+
+routes:
+  - match:
+      severity: [error, critical]
+    providers: [slack, email]
+```
+
+Sends a plain-text email through any SMTP server. The subject is
+`<subject_prefix> [SEVERITY] <title>`; the body has the message, the signal's
+fields (severity, source, event, environment, service, component, team, run
+ID, correlation and trace IDs, log URL), its metadata, and the signal ID and
+time.
+
+`tls` decides how the connection is secured:
+
+| `tls` | Default port | Meaning |
+|---|---|---|
+| `starttls` | 587 | Plain connection upgraded with STARTTLS. If the server doesn't offer it, the send fails rather than going out unencrypted. |
+| `tls` | 465 | TLS from the first byte (SMTPS). |
+| `none` | 25 | No encryption. Only for a relay on localhost or inside your network. |
+
+`username` and `password` go together; leave both out for a relay that does
+not ask for authentication. Addresses are checked when the config loads, so a
+typo fails at startup instead of on the first alert.
+
+Every email for the same `dedup_key` carries the same `References` header and
+subject, so mail clients thread repeats of a failure into one conversation.
+
+Hosted email services all accept SMTP, so they need no extra package:
+
+| Service | `smtp.host` | Credentials |
+|---|---|---|
+| Amazon SES | `email-smtp.<region>.amazonaws.com` | SES SMTP credentials (SES console > SMTP settings) |
+| SendGrid | `smtp.sendgrid.net` | username `apikey`, password the API key |
+| Mailgun | `smtp.mailgun.org` (`smtp.eu.mailgun.org` in the EU) | the domain's SMTP login |
+| Postmark | `smtp.postmarkapp.com` | the server API token as both username and password |
+| Gmail / Google Workspace | `smtp.gmail.com` | the account and an app password, or use the Workspace SMTP relay |
+| Microsoft 365 | `smtp.office365.com` | a mailbox with SMTP AUTH enabled |
+
+Email is a slow channel: use it for the trail and for people who are not on
+chat, and pair it with an on-call provider for anything urgent. Because
+delivery stops at the first provider that succeeds, `[email, slack]` sends to
+Slack only when the email could not be handed to the server.
