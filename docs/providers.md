@@ -13,9 +13,11 @@ the file with `${VAR}` or a secret reference such as `${aws-sm:prod/opssignal#pd
 | [PagerDuty](#pagerduty) | `pagerduty` | `routing_key` | `url` |
 | [Microsoft Teams](#microsoft-teams) | `teams` | `webhook_url` | none |
 | [Opsgenie](#opsgenie) | `opsgenie` | `api_key` | `url`, `tags` |
-| [Email](#email) | `email` | `from`, `to`, `smtp.host` | `cc`, `subject_prefix`, `smtp.port`, `smtp.username`, `smtp.password`, `smtp.tls` |
+| [Email](#email) | `email` | `from`, `to`, and `smtp.host` or `ses` | `cc`, `subject_prefix`, `smtp.port`, `smtp.username`, `smtp.password`, `smtp.tls`, `ses.region`, `ses.configuration_set` |
 
-All providers are in the base package; none needs a cloud extra.
+All providers are in the base package. The one exception is email through
+the [Amazon SES API](#amazon-ses-api), which needs `opssignal[aws]`; email over
+SMTP, SES's SMTP endpoint included, needs no extra.
 
 A route's providers are tried in order and delivery **stops at the first one
 that succeeds**, so later providers are fallbacks, not extra copies. A route
@@ -188,7 +190,8 @@ routes:
     providers: [slack, email]
 ```
 
-Sends a plain-text email through any SMTP server. The subject is
+Sends a plain-text email through any SMTP server, or through the
+[Amazon SES API](#amazon-ses-api) with `ses` in place of `smtp`. The subject is
 `<subject_prefix> [SEVERITY] <title>`; the body has the message, the signal's
 fields (severity, source, event, environment, service, component, team, run
 ID, correlation and trace IDs, log URL), its metadata, and the signal ID and
@@ -219,6 +222,32 @@ Hosted email services all accept SMTP, so they need no extra package:
 | Postmark | `smtp.postmarkapp.com` | the server API token as both username and password |
 | Gmail / Google Workspace | `smtp.gmail.com` | the account and an app password, or use the Workspace SMTP relay |
 | Microsoft 365 | `smtp.office365.com` | a mailbox with SMTP AUTH enabled |
+
+### Amazon SES API
+
+```yaml
+providers:
+  email:
+    from: "OpsSignal <alerts@example.com>"
+    to: [data-oncall@example.com]
+    ses:
+      region: eu-west-1               # optional; defaults to AWS_REGION
+      configuration_set: alerts       # optional
+```
+
+Sends through the SES v2 `SendEmail` API with the standard AWS credential
+chain: an EKS service account (IRSA), an ECS task role, an EC2 instance profile,
+or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. There are no SMTP credentials to
+store or rotate. The role needs `ses:SendEmail` on the sending identity, and
+`from` must be an address or domain verified in SES for that region (while the
+account is in the SES sandbox, so must every recipient). `AWS_ENDPOINT_URL_SESV2`
+overrides the endpoint, for a VPC endpoint or LocalStack.
+
+This needs AWS support: `pip install 'opssignal[aws]'` for Python, or a CLI or C
+library built with `--features aws`. Without it, the config fails to load with
+an error naming the extra, rather than failing on the first alert. Set exactly
+one of `smtp` and `ses`. The message is the same one SMTP sends, threading
+headers included.
 
 Email is a slow channel: use it for the trail and for people who are not on
 chat, and pair it with an on-call provider for anything urgent. Because
