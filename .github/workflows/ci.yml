@@ -135,3 +135,20 @@ jobs:
           else
             echo "No CLAUDE.md present, skipping."
           fi
+
+  # The one check branch protection requires. Its name stays stable when
+  # jobs are added or renamed above: add every new job to `needs`.
+  tests-passed:
+    name: Tests passed
+    if: always()
+    needs: [rust, rust-security, python, ast-grep, python-lint, claude-md-integrity]
+    runs-on: ubuntu-slim
+    steps:
+      - name: Fail unless every job succeeded
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::A CI job did not succeed: ${{ join(needs.*.result, ', ') }}"
+          exit 1

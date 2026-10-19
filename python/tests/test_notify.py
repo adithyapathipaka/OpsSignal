@@ -44,3 +44,29 @@ def test_empty_source_raises():
 def test_empty_event_type_raises():
     with pytest.raises(ValueError, match="event_type must not be empty"):
         notify(source="airflow", event_type="", title="A task failed")
+
+
+def test_optional_context_fields_and_metadata():
+    import datetime
+
+    notify(
+        source="dbt",
+        event_type="dbt_model_failed",
+        title="dbt model failed: orders",
+        severity="error",
+        service="jaffle_shop",
+        component="model.jaffle_shop.orders",
+        team="data",
+        run_id="inv-1",
+        correlation_id="c-1",
+        trace_id="t-1",
+        log_url="https://logs.example.test/1",
+        dedup_key="orders",
+        # Non-JSON values like datetimes are sent as strings.
+        metadata={"failures": 3, "at": datetime.datetime(2026, 1, 1)},
+    )
+
+
+def test_unserialisable_metadata_raises():
+    with pytest.raises(ValueError, match="metadata"):
+        notify(source="ci", event_type="e", title="t", metadata={1j: "complex keys cannot be JSON"})

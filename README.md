@@ -18,7 +18,7 @@ Application event happens
         ↓
 Rust core: validate → route → persist → deliver (sync or async, your choice)
         ↓
-Notification providers (Console, Webhook, Slack, PagerDuty, Microsoft Teams)
+Notification providers (Console, Webhook, Slack, PagerDuty, Microsoft Teams, Opsgenie, Email)
 ```
 
 Existing tools solve parts of this problem — Alertmanager routes alerts but
@@ -81,10 +81,10 @@ the FFI panic-safety rules every binding must follow.
 
 | Version | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams providers, SQLite sink, Python bindings, Airflow adapter, CLI |
+| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI |
 | v0.2 | Dedup, retry/backoff tuning, Alertmanager provider |
 | v0.3 | Postgres sink |
-| v0.4 | dbt + Dagster adapters |
+| v0.4 | Dagster + Prefect adapters |
 | v0.5+ | Java/Go bindings — **only if real external demand appears** |
 
 Java and Go are explicitly **not** committed for any near-term release. The

@@ -17,7 +17,7 @@
 use crate::routing::{Route, RoutingConfig};
 use crate::signal::SignalError;
 use crate::source::{self, ConfigSource, LoadOptions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -151,6 +151,10 @@ pub struct ProvidersConfig {
     pub pagerduty: Option<PagerDutyConfig>,
     #[serde(default)]
     pub teams: Option<TeamsConfig>,
+    #[serde(default)]
+    pub opsgenie: Option<OpsgenieConfig>,
+    #[serde(default)]
+    pub email: Option<EmailConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -188,6 +192,149 @@ pub struct PagerDutyConfig {
 pub struct TeamsConfig {
     /// Workflows (or legacy incoming) webhook URL of a Teams channel.
     pub webhook_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpsgenieConfig {
+    /// Key of an API integration on an Opsgenie team.
+    pub api_key: String,
+    /// Alert API endpoint; defaults to the US one. EU accounts set
+    /// `https://api.eu.opsgenie.com/v2/alerts`.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Added to every alert, before the signal's severity and
+    /// environment.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Serialize as well, so a build without the AWS feature can hand the
+/// config to the `opssignal[aws]` add-on.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmailConfig {
+    /// Sender, as `alerts@example.com` or `OpsSignal <alerts@example.com>`.
+    pub from: String,
+    /// At least one recipient.
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// Put before the subject, such as `[opssignal]`, for mail filters.
+    #[serde(default)]
+    pub subject_prefix: Option<String>,
+    /// Send through an SMTP server. Exactly one of `smtp` and `ses`.
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
+    /// Send through the Amazon SES API with the AWS credential chain;
+    /// needs the `aws` add-on.
+    #[serde(default)]
+    pub ses: Option<SesConfig>,
+}
+
+/// How an [`EmailConfig`] sends.
+pub enum EmailTransport<'a> {
+    Smtp(&'a SmtpConfig),
+    Ses(&'a SesConfig),
+}
+
+impl EmailConfig {
+    /// The transport; [`EmailConfig::check`] makes sure there is
+    /// exactly one.
+    pub fn transport(&self) -> Option<EmailTransport<'_>> {
+        match (&self.smtp, &self.ses) {
+            (Some(smtp), None) => Some(EmailTransport::Smtp(smtp)),
+            (None, Some(ses)) => Some(EmailTransport::Ses(ses)),
+            _ => None,
+        }
+    }
+
+    /// Addresses are checked at load time, since a bad one would fail
+    /// every send.
+    fn check(&self) -> Result<(), SignalError> {
+        if self.to.is_empty() {
+            return Err(config_err("providers.email.to lists no recipients"));
+        }
+        let addresses = std::iter::once(&self.from).chain(&self.to).chain(&self.cc);
+        for address in addresses {
+            address.parse::<lettre::message::Mailbox>().map_err(|e| {
+                config_err(format!("providers.email: invalid address {address:?}: {e}"))
+            })?;
+        }
+        match self.transport() {
+            Some(EmailTransport::Smtp(smtp)) => {
+                if smtp.username.is_some() != smtp.password.is_some() {
+                    return Err(config_err(
+                        "providers.email.smtp needs both username and password, or neither",
+                    ));
+                }
+            }
+            Some(EmailTransport::Ses(_)) => {
+                if !crate::providers::external::cloud_supported("aws") {
+                    return Err(config_err(format!(
+                        "providers.email: {}",
+                        crate::providers::external::missing_support("email over Amazon SES", "aws")
+                    )));
+                }
+            }
+            None => {
+                return Err(config_err(
+                    "providers.email needs exactly one of smtp and ses",
+                ))
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SesConfig {
+    /// Defaults to `AWS_REGION`, then `AWS_DEFAULT_REGION`, then
+    /// `us-east-1`.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// SES configuration set, for event publishing and dedicated IPs.
+    #[serde(default)]
+    pub configuration_set: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmtpConfig {
+    pub host: String,
+    /// Defaults to 587 for `starttls`, 465 for `tls` and 25 for `none`.
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub tls: SmtpTls,
+}
+
+impl SmtpConfig {
+    pub fn port(&self) -> u16 {
+        self.port.unwrap_or(match self.tls {
+            SmtpTls::Starttls => 587,
+            SmtpTls::Tls => 465,
+            SmtpTls::None => 25,
+        })
+    }
+}
+
+/// How the SMTP connection is secured.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS, which must succeed.
+    #[default]
+    Starttls,
+    /// TLS from the first byte (SMTPS).
+    Tls,
+    /// No encryption, for a relay on localhost or inside the network.
+    None,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -259,6 +406,8 @@ impl Config {
             config.providers.webhook = p.webhook.or(config.providers.webhook.take());
             config.providers.pagerduty = p.pagerduty.or(config.providers.pagerduty.take());
             config.providers.teams = p.teams.or(config.providers.teams.take());
+            config.providers.opsgenie = p.opsgenie.or(config.providers.opsgenie.take());
+            config.providers.email = p.email.or(config.providers.email.take());
             if let Some(storage) = layer.storage {
                 config.storage = storage;
             }
@@ -268,6 +417,9 @@ impl Config {
             route_origins.append(&mut origins);
             config.routes = routes;
             origins = route_origins;
+        }
+        if let Some(email) = &config.providers.email {
+            email.check()?;
         }
         config.check_routes(&origins)?;
         Ok(config)
@@ -313,6 +465,12 @@ impl Config {
         }
         if self.providers.teams.is_some() {
             names.push("teams");
+        }
+        if self.providers.opsgenie.is_some() {
+            names.push("opsgenie");
+        }
+        if self.providers.email.is_some() {
+            names.push("email");
         }
         names
     }
@@ -630,6 +788,90 @@ mod tests {
             config.providers.teams.expect("teams").webhook_url,
             "https://example.test/org"
         );
+    }
+
+    #[test]
+    fn opsgenie_parses_with_tags_and_an_eu_endpoint() {
+        let yaml = "providers:\n  opsgenie:\n    api_key: K3Y\n    url: https://api.eu.opsgenie.com/v2/alerts\n    tags: [data, etl]\nroutes:\n  - match:\n      severity: [critical]\n    providers: [opsgenie]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let og = config.providers.opsgenie.as_ref().expect("opsgenie");
+        assert_eq!(og.api_key, "K3Y");
+        assert_eq!(
+            og.url.as_deref(),
+            Some("https://api.eu.opsgenie.com/v2/alerts")
+        );
+        assert_eq!(og.tags, vec!["data", "etl"]);
+        assert_eq!(config.provider_names(), vec!["console", "opsgenie"]);
+    }
+
+    #[test]
+    fn opsgenie_without_an_api_key_is_rejected() {
+        let yaml = "providers:\n  opsgenie:\n    tags: [data]\n";
+        let err = Config::from_yaml_str(yaml).expect_err("api_key is required");
+        assert!(err.to_string().contains("api_key"), "{err}");
+    }
+
+    #[test]
+    fn email_parses_with_smtp_defaults() {
+        let yaml = "providers:\n  email:\n    from: \"OpsSignal <alerts@example.test>\"\n    to: [oncall@example.test]\n    smtp:\n      host: smtp.example.test\n      username: u\n      password: p\nroutes:\n  - match:\n      severity: [error]\n    providers: [email]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let email = config.providers.email.as_ref().expect("email");
+        assert_eq!(email.to, vec!["oncall@example.test"]);
+        assert!(email.cc.is_empty());
+        let smtp = email.smtp.as_ref().expect("smtp");
+        assert_eq!(smtp.tls, SmtpTls::Starttls);
+        assert_eq!(smtp.port(), 587);
+        assert_eq!(config.provider_names(), vec!["console", "email"]);
+    }
+
+    #[test]
+    fn email_tls_modes_parse() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: relay.internal\n      tls: none\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let smtp = config.providers.email.expect("email").smtp.expect("smtp");
+        assert_eq!(smtp.tls, SmtpTls::None);
+        assert_eq!(smtp.port(), 25);
+    }
+
+    #[test]
+    fn email_with_a_bad_address_is_rejected_at_load() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [not-an-address]\n    smtp:\n      host: h\n";
+        let err = Config::from_yaml_str(yaml).expect_err("bad address");
+        assert!(err.to_string().contains("not-an-address"), "{err}");
+    }
+
+    #[test]
+    fn email_without_recipients_is_rejected() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: []\n    smtp:\n      host: h\n";
+        let err = Config::from_yaml_str(yaml).expect_err("no recipients");
+        assert!(err.to_string().contains("recipients"), "{err}");
+    }
+
+    #[test]
+    fn email_username_without_password_is_rejected() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: h\n      username: u\n";
+        let err = Config::from_yaml_str(yaml).expect_err("half credentials");
+        assert!(err.to_string().contains("password"), "{err}");
+    }
+
+    #[test]
+    fn email_needs_exactly_one_transport() {
+        let neither = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n";
+        let err = Config::from_yaml_str(neither).expect_err("no transport");
+        assert!(err.to_string().contains("exactly one"), "{err}");
+        let both = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: h\n    ses: {}\n";
+        let err = Config::from_yaml_str(both).expect_err("two transports");
+        assert!(err.to_string().contains("exactly one"), "{err}");
+    }
+
+    #[cfg(feature = "aws")]
+    #[test]
+    fn email_over_ses_parses_in_an_aws_build() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    ses:\n      region: eu-west-1\n      configuration_set: alerts\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let ses = config.providers.email.expect("email").ses.expect("ses");
+        assert_eq!(ses.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(ses.configuration_set.as_deref(), Some("alerts"));
     }
 
     #[test]

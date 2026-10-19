@@ -35,7 +35,7 @@ extra that installs a small native add-on, which `opssignal` finds on its own:
 
 | Install | Adds |
 |---|---|
-| `pip install 'opssignal[aws]'` | `s3://`, `appconfig://`, `dynamodb://`, `${aws-sm:...}` secrets |
+| `pip install 'opssignal[aws]'` | `s3://`, `appconfig://`, `dynamodb://`, `${aws-sm:...}` secrets, [email through the SES API](providers.md#amazon-ses-api) |
 | `pip install 'opssignal[gcp]'` | `gs://`, `firestore://`, `${gcp-sm:...}` secrets |
 | `pip install 'opssignal[azure]'` | `az://`, `azappconfig://`, `cosmos://`, `${azure-kv:...}` secrets |
 | `pip install 'opssignal[all]'` | all three |
@@ -51,7 +51,7 @@ feature named like the pip extra:
 
 | Build | Adds |
 |---|---|
-| `cargo build -p opssignal-cli --features aws` | `s3://`, `appconfig://`, `dynamodb://`, `${aws-sm:...}` |
+| `cargo build -p opssignal-cli --features aws` | `s3://`, `appconfig://`, `dynamodb://`, `${aws-sm:...}`, email through the SES API |
 | `cargo build -p opssignal-cli --features gcp` | `gs://`, `firestore://`, `${gcp-sm:...}` |
 | `cargo build -p opssignal-cli --features azure` | `az://`, `azappconfig://`, `cosmos://`, `${azure-kv:...}` |
 | `cargo build -p opssignal-cli --features all` | all three |

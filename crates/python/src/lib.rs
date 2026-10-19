@@ -5,6 +5,7 @@
 //! that erodes trust in a tool whose entire purpose is "tell me when
 //! things fail."
 
+use opssignal_core::providers::external::{register_cloud_sender, ExternalSender};
 use opssignal_core::signal::{Severity, SignalInput};
 use opssignal_core::source::{register_cloud_fetcher, ExternalFetcher};
 use opssignal_core::SignalClient;
@@ -42,10 +43,31 @@ impl ExternalFetcher for AddonFetcher {
     }
 }
 
+/// Hands a core send to an add-on's `send(provider, config, signal)`.
+struct AddonSender(Py<PyAny>);
+
+impl ExternalSender for AddonSender {
+    fn send(&self, provider: &str, config_json: &str, signal_json: &str) -> Result<(), String> {
+        Python::try_attach(|py| {
+            self.0
+                .call1(py, (provider, config_json, signal_json))
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .unwrap_or_else(|| Err("the Python interpreter is shutting down".to_string()))
+    }
+}
+
 fn register_addons(py: Python<'_>) {
     for (cloud, module) in ADDONS {
-        if let Ok(fetch) = py.import(module).and_then(|m| m.getattr("fetch")) {
+        let Ok(module) = py.import(module) else {
+            continue;
+        };
+        if let Ok(fetch) = module.getattr("fetch") {
             register_cloud_fetcher(cloud, Arc::new(AddonFetcher(fetch.unbind())));
+        }
+        if let Ok(send) = module.getattr("send") {
+            register_cloud_sender(cloud, Arc::new(AddonSender(send.unbind())));
         }
     }
 }
@@ -63,14 +85,22 @@ fn client(py: Python<'_>) -> PyResult<&'static SignalClient> {
 }
 
 /// notify(source, event_type, title, severity="info", message=None,
-///         environment=None, metadata=None)
+///         environment=None, *, service=None, component=None, team=None,
+///         run_id=None, correlation_id=None, trace_id=None, log_url=None,
+///         metadata=None, dedup_key=None)
 ///
 /// Validates the signal, then hands it to the process-global
 /// SignalClient with fire-and-forget semantics (`notify_async`).
-/// Raises ValueError for invalid input and RuntimeError if signal.yaml
-/// cannot be loaded.
+/// `metadata` is any JSON-serialisable object, usually a dict. Raises
+/// ValueError for invalid input and RuntimeError if signal.yaml cannot
+/// be loaded.
 #[pyfunction]
-#[pyo3(signature = (source, event_type, title, severity="info", message=None, environment=None))]
+#[pyo3(signature = (
+    source, event_type, title, severity="info", message=None, environment=None, *,
+    service=None, component=None, team=None, run_id=None, correlation_id=None,
+    trace_id=None, log_url=None, metadata=None, dedup_key=None,
+))]
+#[allow(clippy::too_many_arguments)]
 fn notify(
     py: Python<'_>,
     source: String,
@@ -79,11 +109,25 @@ fn notify(
     severity: &str,
     message: Option<String>,
     environment: Option<String>,
+    service: Option<String>,
+    component: Option<String>,
+    team: Option<String>,
+    run_id: Option<String>,
+    correlation_id: Option<String>,
+    trace_id: Option<String>,
+    log_url: Option<String>,
+    metadata: Option<&Bound<'_, PyAny>>,
+    dedup_key: Option<String>,
 ) -> PyResult<()> {
     // Unknown severities fall back to Info rather than raising — the
     // Python binding prioritises leniency over strictness here so that
     // a misconfigured severity string never silences an alert.
     let severity = severity.parse::<Severity>().unwrap_or_default();
+
+    let metadata = match metadata {
+        Some(obj) if !obj.is_none() => Some(to_json(py, obj)?),
+        _ => None,
+    };
 
     let input = SignalInput {
         source,
@@ -92,7 +136,15 @@ fn notify(
         severity,
         message,
         environment,
-        ..Default::default()
+        service,
+        component,
+        team,
+        run_id,
+        correlation_id,
+        trace_id,
+        log_url,
+        metadata,
+        dedup_key,
     };
 
     opssignal_core::signal::validate(&input)
@@ -100,6 +152,21 @@ fn notify(
 
     client(py)?.notify_async(input);
     Ok(())
+}
+
+/// Converts a Python object to JSON through the standard `json` module,
+/// with `default=str` so dates and other common values don't make an
+/// alert fail.
+fn to_json(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    let json = py.import("json")?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("default", py.import("builtins")?.getattr("str")?)?;
+    let text: String = json
+        .call_method("dumps", (obj,), Some(&kwargs))
+        .map_err(|e| PyValueError::new_err(format!("metadata is not JSON-serialisable: {e}")))?
+        .extract()?;
+    serde_json::from_str(&text)
+        .map_err(|e| PyValueError::new_err(format!("metadata is not valid JSON: {e}")))
 }
 
 /// flush(timeout=5.0) -> bool
