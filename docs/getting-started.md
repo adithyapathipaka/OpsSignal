@@ -41,6 +41,11 @@ default_args = {
 }
 ```
 
+`notify()` also takes the rest of the signal's context as keyword arguments:
+`service`, `component`, `team`, `run_id`, `correlation_id`, `trace_id`,
+`log_url`, `dedup_key`, and `metadata` (any JSON-serialisable object, usually a
+dict; dates and other values become strings).
+
 `notify()` is fire-and-forget: it validates the input, hands the signal to a
 background runtime and returns immediately, so a slow Slack webhook never
 delays the task being monitored.
@@ -49,9 +54,70 @@ delays the task being monitored.
 - A broken `signal.yaml` raises `RuntimeError` on every call until it is fixed.
 - An unknown `severity` string falls back to `info` rather than raising.
 
-!!! warning "Short-lived processes"
-    Because delivery happens in the background, a signal can be lost if the
-    process exits immediately after `notify()`. A `flush()` call is planned.
+!!! note "Short-lived processes"
+    Delivery happens in the background. Signals still in flight when the
+    interpreter exits are flushed for up to 5 seconds; call
+    `opssignal.flush(timeout)` to wait at a point of your choosing.
+
+## dbt
+
+Report a run's failures after any dbt command. dbt writes
+`target/run_results.json` on every run, so this works with dbt Core, dbt Fusion
+and artifacts downloaded from dbt Cloud, from a shell, CI job or orchestrator
+task:
+
+```bash
+dbt build; status=$?
+python -m opssignal.integrations.dbt target/run_results.json --environment prod
+exit $status
+```
+
+The reporter always exits 0, so the job still fails or passes on dbt's own
+status. From Python, call
+`opssignal.integrations.dbt.report_run_results("target/run_results.json", environment="prod")`.
+
+When dbt runs in-process (dbt-core 1.5+), pass the callback to `dbtRunner` to
+alert as each node fails, while the rest of the run continues:
+
+```python
+from dbt.cli.main import dbtRunner
+from opssignal.integrations.dbt import make_callback
+
+dbtRunner(callbacks=[make_callback(environment="prod")]).invoke(["build"])
+```
+
+Both send one signal per failed node and per warned test:
+
+| dbt status | Severity | `event_type` | Title |
+|---|---|---|---|
+| `error`, `fail` | `error` | `dbt_<resource>_failed`, such as `dbt_model_failed` | `dbt model failed: orders` |
+| `warn` | `warning` | `dbt_<resource>_warned`, such as `dbt_test_warned` | `dbt test warned: <test name>` |
+
+`service` is the dbt project, `component` the node's `unique_id`, `run_id` the
+dbt invocation ID, and `metadata` holds the status, resource type, failure
+count, execution time, relation, dbt version, command and target. Skipped nodes
+are not reported: they were skipped because an upstream node failed, and that
+node has its own signal. The title is stable for a node, so a node that keeps
+failing run after run is deduplicated by providers that support it.
+
+A broken source can fail hundreds of tests in one run. Past 20 signals (change
+it with `--max-signals` or `max_signals=`, 0 for no limit) the rest are rolled
+into one `dbt_run_degraded` signal that lists their IDs.
+
+Route dbt signals like any other, for example:
+
+```yaml
+routes:
+  - match:
+      source: dbt
+      severity: [error]
+      environment: prod
+    providers: [pagerduty, slack]
+  - match:
+      source: dbt
+      severity: [warning]
+    providers: [slack]
+```
 
 ## Command line
 
