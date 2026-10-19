@@ -151,6 +151,8 @@ pub struct ProvidersConfig {
     pub pagerduty: Option<PagerDutyConfig>,
     #[serde(default)]
     pub teams: Option<TeamsConfig>,
+    #[serde(default)]
+    pub email: Option<EmailConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -188,6 +190,81 @@ pub struct PagerDutyConfig {
 pub struct TeamsConfig {
     /// Workflows (or legacy incoming) webhook URL of a Teams channel.
     pub webhook_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmailConfig {
+    /// Sender, as `alerts@example.com` or `OpsSignal <alerts@example.com>`.
+    pub from: String,
+    /// At least one recipient.
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// Put before the subject, such as `[opssignal]`, for mail filters.
+    #[serde(default)]
+    pub subject_prefix: Option<String>,
+    pub smtp: SmtpConfig,
+}
+
+impl EmailConfig {
+    /// Addresses are checked at load time, since a bad one would fail
+    /// every send.
+    fn check(&self) -> Result<(), SignalError> {
+        if self.to.is_empty() {
+            return Err(config_err("providers.email.to lists no recipients"));
+        }
+        let addresses = std::iter::once(&self.from).chain(&self.to).chain(&self.cc);
+        for address in addresses {
+            address.parse::<lettre::message::Mailbox>().map_err(|e| {
+                config_err(format!("providers.email: invalid address {address:?}: {e}"))
+            })?;
+        }
+        if self.smtp.username.is_some() != self.smtp.password.is_some() {
+            return Err(config_err(
+                "providers.email.smtp needs both username and password, or neither",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmtpConfig {
+    pub host: String,
+    /// Defaults to 587 for `starttls`, 465 for `tls` and 25 for `none`.
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub tls: SmtpTls,
+}
+
+impl SmtpConfig {
+    pub fn port(&self) -> u16 {
+        self.port.unwrap_or(match self.tls {
+            SmtpTls::Starttls => 587,
+            SmtpTls::Tls => 465,
+            SmtpTls::None => 25,
+        })
+    }
+}
+
+/// How the SMTP connection is secured.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS, which must succeed.
+    #[default]
+    Starttls,
+    /// TLS from the first byte (SMTPS).
+    Tls,
+    /// No encryption, for a relay on localhost or inside the network.
+    None,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -259,6 +336,7 @@ impl Config {
             config.providers.webhook = p.webhook.or(config.providers.webhook.take());
             config.providers.pagerduty = p.pagerduty.or(config.providers.pagerduty.take());
             config.providers.teams = p.teams.or(config.providers.teams.take());
+            config.providers.email = p.email.or(config.providers.email.take());
             if let Some(storage) = layer.storage {
                 config.storage = storage;
             }
@@ -268,6 +346,9 @@ impl Config {
             route_origins.append(&mut origins);
             config.routes = routes;
             origins = route_origins;
+        }
+        if let Some(email) = &config.providers.email {
+            email.check()?;
         }
         config.check_routes(&origins)?;
         Ok(config)
@@ -313,6 +394,9 @@ impl Config {
         }
         if self.providers.teams.is_some() {
             names.push("teams");
+        }
+        if self.providers.email.is_some() {
+            names.push("email");
         }
         names
     }
@@ -630,6 +714,48 @@ mod tests {
             config.providers.teams.expect("teams").webhook_url,
             "https://example.test/org"
         );
+    }
+
+    #[test]
+    fn email_parses_with_smtp_defaults() {
+        let yaml = "providers:\n  email:\n    from: \"OpsSignal <alerts@example.test>\"\n    to: [oncall@example.test]\n    smtp:\n      host: smtp.example.test\n      username: u\n      password: p\nroutes:\n  - match:\n      severity: [error]\n    providers: [email]\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let email = config.providers.email.as_ref().expect("email");
+        assert_eq!(email.to, vec!["oncall@example.test"]);
+        assert!(email.cc.is_empty());
+        assert_eq!(email.smtp.tls, SmtpTls::Starttls);
+        assert_eq!(email.smtp.port(), 587);
+        assert_eq!(config.provider_names(), vec!["console", "email"]);
+    }
+
+    #[test]
+    fn email_tls_modes_parse() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: relay.internal\n      tls: none\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let smtp = &config.providers.email.expect("email").smtp;
+        assert_eq!(smtp.tls, SmtpTls::None);
+        assert_eq!(smtp.port(), 25);
+    }
+
+    #[test]
+    fn email_with_a_bad_address_is_rejected_at_load() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [not-an-address]\n    smtp:\n      host: h\n";
+        let err = Config::from_yaml_str(yaml).expect_err("bad address");
+        assert!(err.to_string().contains("not-an-address"), "{err}");
+    }
+
+    #[test]
+    fn email_without_recipients_is_rejected() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: []\n    smtp:\n      host: h\n";
+        let err = Config::from_yaml_str(yaml).expect_err("no recipients");
+        assert!(err.to_string().contains("recipients"), "{err}");
+    }
+
+    #[test]
+    fn email_username_without_password_is_rejected() {
+        let yaml = "providers:\n  email:\n    from: a@example.test\n    to: [b@example.test]\n    smtp:\n      host: h\n      username: u\n";
+        let err = Config::from_yaml_str(yaml).expect_err("half credentials");
+        assert!(err.to_string().contains("password"), "{err}");
     }
 
     #[test]

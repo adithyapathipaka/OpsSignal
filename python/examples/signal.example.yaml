@@ -16,6 +16,13 @@ providers:
   #   routing_key: "${PAGERDUTY_ROUTING_KEY}"
   # teams:
   #   webhook_url: "${TEAMS_WEBHOOK_URL}"
+  # email:
+  #   from: "OpsSignal <alerts@example.com>"
+  #   to: [data-oncall@example.com]
+  #   smtp:
+  #     host: smtp.example.com
+  #     username: "${SMTP_USERNAME}"
+  #     password: "${SMTP_PASSWORD}"
 
 routes:
   - match:

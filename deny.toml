@@ -30,6 +30,9 @@ exceptions = [
     # Mozilla's root CA bundle, pulled in by reqwest's rustls-tls feature.
     # CDLA-Permissive-2.0 is a permissive data license.
     { allow = ["CDLA-Permissive-2.0"], name = "webpki-roots" },
+    # Quoted-printable encoding for the email provider (via lettre).
+    # 0BSD is public-domain-equivalent: no attribution required.
+    { allow = ["0BSD"], name = "quoted_printable" },
 ]
 
 [bans]

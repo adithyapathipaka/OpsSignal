@@ -25,8 +25,8 @@ use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider};
 use inflight::InFlight;
 use providers::{
-    console::ConsoleProvider, pagerduty::PagerDutyProvider, slack::SlackProvider,
-    teams::TeamsProvider, webhook::WebhookProvider,
+    console::ConsoleProvider, email::EmailProvider, pagerduty::PagerDutyProvider,
+    slack::SlackProvider, teams::TeamsProvider, webhook::WebhookProvider,
 };
 use routing::RoutingConfig;
 use signal::{Signal, SignalError, SignalInput};
@@ -75,6 +75,12 @@ impl Pipeline {
             providers.insert(
                 "teams".to_string(),
                 Arc::new(TeamsProvider::new(teams.webhook_url.clone())),
+            );
+        }
+        if let Some(email) = &config.providers.email {
+            providers.insert(
+                "email".to_string(),
+                Arc::new(EmailProvider::new(email.clone())),
             );
         }
         Pipeline {
