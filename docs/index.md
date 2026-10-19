@@ -49,10 +49,10 @@ notifications.
 
 | Version | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams providers, SQLite sink, Python bindings, Airflow adapter, CLI |
+| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI |
 | v0.2 | Dedup, retry/backoff tuning, Alertmanager provider |
 | v0.3 | Postgres sink |
-| v0.4 | dbt + Dagster adapters |
+| v0.4 | Dagster + Prefect adapters |
 | v0.5+ | Java/Go bindings, only if real external demand appears |
 
 ## License
