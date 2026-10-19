@@ -12,6 +12,7 @@ the file with `${VAR}` or a secret reference such as `${aws-sm:prod/opssignal#pd
 | [Webhook](#webhook) | `webhook` | `url` | none |
 | [PagerDuty](#pagerduty) | `pagerduty` | `routing_key` | `url` |
 | [Microsoft Teams](#microsoft-teams) | `teams` | `webhook_url` | none |
+| [Opsgenie](#opsgenie) | `opsgenie` | `api_key` | `url`, `tags` |
 
 All providers are in the base package; none needs a cloud extra.
 
@@ -119,3 +120,48 @@ The card shows:
 - facts for severity, source and event type, plus environment, service,
   component, team and run ID when set;
 - a **View logs** button when `log_url` is set.
+
+## Opsgenie
+
+```yaml
+providers:
+  opsgenie:
+    api_key: "${OPSGENIE_API_KEY}"
+    # EU-hosted accounts only:
+    # url: "https://api.eu.opsgenie.com/v2/alerts"
+    tags: [data-platform]
+
+routes:
+  - match:
+      severity: [critical, error]
+      environment: prod
+    providers: [opsgenie, slack]
+```
+
+Creates an alert through the
+[Alert API](https://docs.opsgenie.com/docs/alert-api#create-alert).
+`api_key` is the key of an **API** integration on the Opsgenie team that should
+receive the alert (Teams > your team > Integrations > Add integration > API).
+The team's routing rules and escalations decide who is notified. `url`
+defaults to `https://api.opsgenie.com/v2/alerts`.
+
+How a signal maps to the alert:
+
+| Opsgenie field | From the signal |
+|---|---|
+| `message` | `title`, cut to 130 characters |
+| `alias` | `dedup_key`, cut to 512 characters |
+| `description` | `message`, followed by a "Logs:" line when `log_url` is set |
+| `priority` | `severity`: `critical` is P1, `error` P2, `warning` P3, `info` and `success` P5 |
+| `source` | `source` |
+| `entity` | `service/component`, or whichever of the two is set |
+| `tags` | the configured `tags`, then the severity and the environment, up to 20 |
+| `details` | `signal_id`, `event_type`, `severity`, `timestamp`, whichever of `environment`, `service`, `component`, `team`, `run_id`, `correlation_id`, `trace_id` and `log_url` are set, and each top-level `metadata` key as `metadata.<key>` |
+
+Because the alias is stable, the same failure sent again raises the open
+alert's count instead of opening a second alert. OpsSignal only creates
+alerts; it does not acknowledge or close them.
+
+Atlassian is folding Opsgenie into Jira Service Management. Its operations
+alert API takes the same request, so a migrated team can point `url` at the
+endpoint shown on its JSM API integration and keep the rest of the config.
