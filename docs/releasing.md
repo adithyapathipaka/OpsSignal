@@ -81,8 +81,15 @@ crates.io only allows trusted publishing for crates that already exist.
     the four `pyproject.toml` files, the extras pins in
     `python/pyproject.toml`, and `opssignal.__version__`, then
     `scripts/check_versions.py` confirms they all agree. You don't need a
-    version-bump commit. Tags must be plain `vX.Y.Z`; anything else stops
-    the run before it builds.
+    version-bump commit.
+
+    Tags are `vX.Y.Z` for a release, or `vX.Y.Z-alpha.N`, `-beta.N` or
+    `-rc.N` for a pre-release; anything else stops the run before it
+    builds. A pre-release keeps that form on crates.io (`1.0.0-beta.1`)
+    and uses Python's spelling on PyPI (`1.0.0b1`). Neither registry gives
+    it to users by default: they ask for it with
+    `pip install --pre opssignal` or `opssignal-core = "1.0.0-beta.1"`.
+    The GitHub release is marked as a pre-release.
 
     The change is made only inside the release run. The files on `main`
     keep their old version, so `main` doesn't show which version was last
