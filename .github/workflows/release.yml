@@ -1,8 +1,8 @@
 name: Release
 
-# Pushing a vX.Y.Z tag writes X.Y.Z into every package's version (see
-# scripts/set_version.py), builds every package, tests the wheels, and
-# then publishes:
+# Pushing a vX.Y.Z (or vX.Y.Z-beta.N) tag writes that version into every
+# package (see scripts/set_version.py), builds every package, tests the
+# wheels, and then publishes:
 #   PyPI:      opssignal-aws, opssignal-gcp, opssignal-azure, then opssignal
 #   crates.io: opssignal-core, then opssignal-cli
 # and attaches the same files to a GitHub release.
@@ -52,6 +52,8 @@ jobs:
         run: |
           python scripts/set_version.py 99.0.0
           python scripts/check_versions.py v99.0.0
+          python scripts/set_version.py 99.0.0-rc.1
+          python scripts/check_versions.py v99.0.0-rc.1
 
   # The wheels are abi3 (pyo3 abi3-py39), so one wheel per platform covers
   # every CPython from 3.9 up.
@@ -70,8 +72,12 @@ jobs:
           - { name: linux-aarch64, runner: ubuntu-24.04-arm, target: aarch64, manylinux: auto }
           - { name: musllinux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
           - { name: musllinux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
-          - { name: macos-x86_64, runner: macos-latest, target: x86_64-apple-darwin }
-          - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin }
+          # macOS is off for now: hosted macOS runners are often unavailable,
+          # which stalls the whole release. Uncomment both lines (and macOS
+          # in the smoke test below) to ship macOS wheels again; until then
+          # macOS users build from the sdist, which needs a Rust toolchain.
+          # - { name: macos-x86_64, runner: macos-latest, target: x86_64-apple-darwin }
+          # - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin }
           - { name: windows-x86_64, runner: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +132,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]  # add macos-latest with the macOS wheels
         python: ["3.9", "3.13"]
     steps:
       - uses: actions/setup-python@v5
@@ -251,9 +257,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # A -alpha.N, -beta.N or -rc.N tag is marked as a pre-release.
       - name: Create the release with every wheel and sdist attached
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
         run: >
           gh release create "$GITHUB_REF_NAME" dist/*
-          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag $PRERELEASE

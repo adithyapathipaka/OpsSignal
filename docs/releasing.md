@@ -17,8 +17,12 @@ packages below, tests the wheels, then uploads them.
 inside wheels, and C users build the library from source.
 
 Wheels are abi3, so one wheel per platform covers CPython 3.9 and later:
-Linux x86_64 and aarch64 (manylinux and musllinux), macOS x86_64 and arm64,
-and Windows x86_64. Each package also gets an sdist.
+Linux x86_64 and aarch64 (manylinux and musllinux) and Windows x86_64.
+Each package also gets an sdist. macOS wheels are turned off for now
+because hosted macOS runners are often unavailable; on macOS, pip builds
+from the sdist, which needs a Rust toolchain. To turn them back on,
+uncomment the two macOS lines in the `wheels` matrix in `release.yml` and
+add `macos-latest` to the smoke test.
 
 ## One-time setup
 
@@ -81,8 +85,15 @@ crates.io only allows trusted publishing for crates that already exist.
     the four `pyproject.toml` files, the extras pins in
     `python/pyproject.toml`, and `opssignal.__version__`, then
     `scripts/check_versions.py` confirms they all agree. You don't need a
-    version-bump commit. Tags must be plain `vX.Y.Z`; anything else stops
-    the run before it builds.
+    version-bump commit.
+
+    Tags are `vX.Y.Z` for a release, or `vX.Y.Z-alpha.N`, `-beta.N` or
+    `-rc.N` for a pre-release; anything else stops the run before it
+    builds. A pre-release keeps that form on crates.io (`1.0.0-beta.1`)
+    and uses Python's spelling on PyPI (`1.0.0b1`). Neither registry gives
+    it to users by default: they ask for it with
+    `pip install --pre opssignal` or `opssignal-core = "1.0.0-beta.1"`.
+    The GitHub release is marked as a pre-release.
 
     The change is made only inside the release run. The files on `main`
     keep their old version, so `main` doesn't show which version was last
