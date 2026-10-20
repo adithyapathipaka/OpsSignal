@@ -17,8 +17,12 @@ packages below, tests the wheels, then uploads them.
 inside wheels, and C users build the library from source.
 
 Wheels are abi3, so one wheel per platform covers CPython 3.9 and later:
-Linux x86_64 and aarch64 (manylinux and musllinux), macOS x86_64 and arm64,
-and Windows x86_64. Each package also gets an sdist.
+Linux x86_64 and aarch64 (manylinux and musllinux) and Windows x86_64.
+Each package also gets an sdist. macOS wheels are turned off for now
+because hosted macOS runners are often unavailable; on macOS, pip builds
+from the sdist, which needs a Rust toolchain. To turn them back on,
+uncomment the two macOS lines in the `wheels` matrix in `release.yml` and
+add `macos-latest` to the smoke test.
 
 ## One-time setup
 
