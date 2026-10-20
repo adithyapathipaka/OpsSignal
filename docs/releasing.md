@@ -107,8 +107,11 @@ the add-ons, so they must exist first), then `opssignal-core` and
 sdist attached.
 
 To build and test everything without publishing, run the workflow by hand
-from **Actions > Release > Run workflow**. Pull requests that touch
-packaging run it too.
+from **Actions > Release > Run workflow**. Pull requests don't run it, to
+save Actions minutes, so do this before tagging if a change touched the
+packaging (a `pyproject.toml`, `Cargo.toml` or `release.yml`); otherwise a
+packaging mistake only shows up when the tag runs, and stops it before
+anything is uploaded.
 
 ## If a release fails halfway
 

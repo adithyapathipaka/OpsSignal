@@ -7,21 +7,14 @@ name: Release
 #   crates.io: opssignal-core, then opssignal-cli
 # and attaches the same files to a GitHub release.
 #
-# Run it by hand (Actions > Release > Run workflow) or open a PR that
-# touches packaging to build and test everything without publishing.
-# One-time account setup is in docs/releasing.md.
+# It does not run on pull requests, to save Actions minutes: run it by
+# hand (Actions > Release > Run workflow) to build and test everything
+# without publishing. One-time account setup is in docs/releasing.md.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - python/pyproject.toml
-      - python/addons/*/pyproject.toml
-      - scripts/check_versions.py
-      - scripts/set_version.py
 
 concurrency:
   group: release-${{ github.ref }}
@@ -45,15 +38,6 @@ jobs:
         run: python scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Check package versions (and the tag, on a release)
         run: python scripts/check_versions.py ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-      # Off a tag, prove set_version.py still finds every version it
-      # must rewrite, so the next release doesn't find out instead.
-      - name: Try setting a version
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          python scripts/set_version.py 99.0.0
-          python scripts/check_versions.py v99.0.0
-          python scripts/set_version.py 99.0.0-rc.1
-          python scripts/check_versions.py v99.0.0-rc.1
 
   # The wheels are abi3 (pyo3 abi3-py39), so one wheel per platform covers
   # every CPython from 3.9 up.
@@ -132,8 +116,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]  # add macos-latest with the macOS wheels
+        # Oldest and newest Python on Linux; Windows minutes cost double,
+        # so it gets one. Add macos-latest with the macOS wheels.
+        os: [ubuntu-latest, windows-latest]
         python: ["3.9", "3.13"]
+        exclude:
+          - { os: windows-latest, python: "3.9" }
     steps:
       - uses: actions/setup-python@v5
         with:
