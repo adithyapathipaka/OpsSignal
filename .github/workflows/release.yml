@@ -4,6 +4,7 @@ name: Release
 # package (see scripts/set_version.py), builds every package, tests the
 # wheels, and then publishes:
 #   PyPI:      opssignal-aws, opssignal-gcp, opssignal-azure, then opssignal
+#              (one GitHub environment each: pypi-aws, pypi-gcp, pypi-azure, pypi)
 #   crates.io: opssignal-core, then opssignal-cli
 # and attaches the same files to a GitHub release.
 #
@@ -158,10 +159,43 @@ jobs:
       # --allow-dirty: on a release the version was just written into the tree.
       - run: cargo publish --dry-run --allow-dirty -p opssignal-core -p opssignal-cli
 
-  publish-pypi:
-    name: Publish to PyPI
+  # One PyPI environment per project. A trusted-publishing token can
+  # create only the one new project whose pending publisher it matched,
+  # so four publishers with the same workflow and environment can't all
+  # be used: each project needs its own environment name.
+  # The add-ons go first: opssignal's [aws]/[gcp]/[azure] extras pin
+  # them, so they must exist before anyone can install opssignal.
+  publish-pypi-addons:
+    name: Publish opssignal-${{ matrix.package }} to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [wheels, sdists, smoke, crates]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [aws, gcp, azure]
+    environment:
+      name: pypi-${{ matrix.package }}
+      url: https://pypi.org/project/opssignal-${{ matrix.package }}/
+    permissions:
+      id-token: write  # PyPI trusted publishing; no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: all
+          merge-multiple: true
+      - name: Pick opssignal-${{ matrix.package }}'s files
+        run: |
+          mkdir dist
+          mv all/opssignal_${{ matrix.package }}-* dist/
+          ls dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true  # a re-run resumes where it stopped
+
+  publish-pypi:
+    name: Publish opssignal to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-pypi-addons
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -171,25 +205,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: all
           merge-multiple: true
-      # The add-ons go first: opssignal's [aws]/[gcp]/[azure] extras pin
-      # them, so they must exist before anyone can install opssignal.
-      - name: Split add-ons from the base package
+      - name: Pick opssignal's files
         run: |
-          mkdir addons base
-          mv dist/opssignal_aws-* dist/opssignal_gcp-* dist/opssignal_azure-* addons/
-          mv dist/* base/
-          ls addons base
-      - name: Upload opssignal-aws, opssignal-gcp, opssignal-azure
-        uses: pypa/gh-action-pypi-publish@release/v1
+          mkdir dist
+          mv all/opssignal-* dist/
+          ls dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: addons/
-          skip-existing: true  # a re-run resumes where it stopped
-      - name: Upload opssignal
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: base/
           skip-existing: true  # a re-run resumes where it stopped
 
   publish-crates:

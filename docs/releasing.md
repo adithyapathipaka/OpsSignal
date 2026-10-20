@@ -31,24 +31,30 @@ crates.io needs a token for the first release only.
 
 ### GitHub environments
 
-In **Settings > Environments**, create two environments, `pypi` and
-`crates-io`. Add yourself as a **required reviewer** on both, so a pushed tag
-waits for your click before anything is uploaded.
+In **Settings > Environments**, create five environments: `pypi`,
+`pypi-aws`, `pypi-gcp`, `pypi-azure` and `crates-io`. Add yourself as a
+**required reviewer** on each, so a pushed tag waits for your click before
+anything is uploaded (the Actions run lets you approve them all at once).
 
 ### PyPI: trusted publishing
 
 The projects don't exist yet, so register a *pending* publisher for each one
 at <https://pypi.org/manage/account/publishing/> (do the same on
 <https://test.pypi.org> if you want a rehearsal). Add four entries, one per
-project name, all with the same values:
+project, each with its own environment name:
 
-| Field             | Value                                  |
-|-------------------|----------------------------------------|
-| PyPI project name | `opssignal`, `opssignal-aws`, `opssignal-gcp`, `opssignal-azure` |
-| Owner             | `adithyapathipaka`                     |
-| Repository name   | `OpsSignal`                            |
-| Workflow name     | `release.yml`                          |
-| Environment name  | `pypi`                                 |
+| PyPI project name | Environment name |
+|-------------------|------------------|
+| `opssignal`       | `pypi`           |
+| `opssignal-aws`   | `pypi-aws`       |
+| `opssignal-gcp`   | `pypi-gcp`       |
+| `opssignal-azure` | `pypi-azure`     |
+
+All four use owner `adithyapathipaka`, repository `OpsSignal` and workflow
+`release.yml`. The environments must differ: a trusted-publishing token can
+create only the one project whose pending publisher it matched, so four
+publishers with the same environment fail with "Non-user identities cannot
+create new projects".
 
 A pending publisher does not reserve the name: whoever uploads first gets
 it. The first successful release turns each one into a normal publisher.
@@ -99,7 +105,8 @@ crates.io only allows trusted publishing for crates that already exist.
     keep their old version, so `main` doesn't show which version was last
     released; the tags do.
 
-2. Approve the `pypi` and `crates-io` deployments in the Actions run.
+2. Approve the `pypi-aws`, `pypi-gcp`, `pypi-azure`, `pypi` and
+   `crates-io` deployments in the Actions run.
 
 The run uploads the three add-ons first, then `opssignal` (its extras pin
 the add-ons, so they must exist first), then `opssignal-core` and
