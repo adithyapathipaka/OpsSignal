@@ -198,6 +198,11 @@ OSS users already populate.
   since SQLite's single-writer model will start serializing writes under
   concurrent load.
 
+Two other tables live in the same SQLite file, owned by the core rather
+than the sink: `throttle` (route `dedup` and `rate_limit` history) and
+`alerts` (which providers hold an open alert for each dedup key, so an
+`acknowledge` or `resolve` goes back to them; see `lifecycle.rs`).
+
 ## Routing
 
 Routing config matches signals against rules and resolves to a list of

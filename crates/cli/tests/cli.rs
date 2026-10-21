@@ -397,3 +397,69 @@ fn notify_batch_with_a_bad_line_sends_nothing_and_exits_two() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("-:3: not a valid signal"));
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn resolve_in_a_later_run_reaches_the_provider_that_got_the_alert() {
+    let dir = TempDir::new();
+    let config = dir.config("");
+    let config = config.to_str().expect("utf-8 path");
+    let raised = run(&notify_args(config, &["--severity", "error"]), &dir);
+    assert_eq!(raised.status.code(), Some(0));
+
+    // No --dedup-key: the same fields give the same key.
+    let resolve = [
+        "--config",
+        config,
+        "resolve",
+        "--source",
+        "ci",
+        "--event-type",
+        "build_failed",
+        "--title",
+        "main is red",
+    ];
+    let resolved = run(&resolve, &dir);
+    assert_eq!(
+        resolved.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&resolved.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&resolved.stdout);
+    assert!(
+        stdout.contains("[signal:ci] resolved build_failed — main is red"),
+        "stdout: {stdout}"
+    );
+
+    // Nothing is open any more, and console doesn't resolve by key.
+    let again = run(&resolve, &dir);
+    assert_eq!(again.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&again.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&again.stderr);
+    assert!(stderr.contains("skipped: no open alert"), "{stderr}");
+}
+
+#[test]
+fn acknowledge_needs_a_dedup_key_or_the_alert_fields() {
+    let dir = TempDir::new();
+    let config = dir.config("");
+    let config = config.to_str().expect("utf-8 path");
+    let out = run(&["--config", config, "acknowledge"], &dir);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("must not be empty"));
+
+    let out = run(
+        &[
+            "--config",
+            config,
+            "acknowledge",
+            "--dedup-key",
+            "nightly-etl",
+        ],
+        &dir,
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no open alert with dedup key nightly-etl")
+    );
+}

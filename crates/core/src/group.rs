@@ -316,6 +316,7 @@ pub(crate) fn digest(closed: &Closed) -> Signal {
             }
         })),
         dedup_key: Some(key),
+        ..Default::default()
     })
 }
 

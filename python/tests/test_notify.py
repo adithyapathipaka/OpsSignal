@@ -70,3 +70,23 @@ def test_optional_context_fields_and_metadata():
 def test_unserialisable_metadata_raises():
     with pytest.raises(ValueError, match="metadata"):
         notify(source="ci", event_type="e", title="t", metadata={1j: "complex keys cannot be JSON"})
+
+
+def test_resolve_and_acknowledge_by_key_or_by_fields():
+    from opssignal import acknowledge, resolve
+
+    resolve("nightly-etl")
+    acknowledge("nightly-etl", message="looking")
+    resolve(source="airflow", event_type="task_failed", title="A task failed")
+
+
+def test_resolve_without_key_or_fields_raises():
+    from opssignal import resolve
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        resolve()
+
+
+def test_unknown_action_raises():
+    with pytest.raises(ValueError, match="unknown action"):
+        notify(source="ci", event_type="e", title="t", action="close")

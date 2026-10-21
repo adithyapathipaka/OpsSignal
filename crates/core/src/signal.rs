@@ -45,6 +45,63 @@ impl std::str::FromStr for Severity {
     }
 }
 
+/// What a signal does to the alert its `dedup_key` names. `trigger`
+/// raises (or repeats) it; `acknowledge` and `resolve` act on an alert
+/// already raised with the same key, on the providers that have it.
+/// Added in v1.0.0-beta.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    #[default]
+    Trigger,
+    Acknowledge,
+    Resolve,
+}
+
+impl Action {
+    /// Whether the signal acts on an existing alert rather than raising one.
+    pub fn is_lifecycle(self) -> bool {
+        self != Action::Trigger
+    }
+}
+
+impl Action {
+    /// How messages announce an `acknowledge` or `resolve`
+    /// ("Acknowledged", "Resolved"); `None` for a trigger.
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Action::Trigger => None,
+            Action::Acknowledge => Some("Acknowledged"),
+            Action::Resolve => Some("Resolved"),
+        }
+    }
+}
+
+impl std::fmt::Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Action::Trigger => "trigger",
+            Action::Acknowledge => "acknowledge",
+            Action::Resolve => "resolve",
+        })
+    }
+}
+
+impl std::str::FromStr for Action {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "trigger" => Ok(Action::Trigger),
+            "acknowledge" | "ack" => Ok(Action::Acknowledge),
+            "resolve" => Ok(Action::Resolve),
+            other => Err(format!(
+                "unknown action {other:?}; expected one of: trigger, acknowledge, resolve"
+            )),
+        }
+    }
+}
+
 /// The generic signal model. `id` and `timestamp` are always stamped by
 /// the core (never trusted from the caller) so every downstream
 /// component — sink, dedup, retry tracking — has a stable identity and
@@ -69,6 +126,8 @@ pub struct Signal {
     pub metadata: serde_json::Value,
     pub timestamp: DateTime<Utc>,
     pub dedup_key: Option<String>,
+    #[serde(default)]
+    pub action: Action,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -76,8 +135,11 @@ fn default_metadata() -> serde_json::Value {
 }
 
 /// Builder input — what callers actually construct. Notably missing
-/// `id` and `timestamp`: those are not caller-settable.
+/// `id` and `timestamp`: those are not caller-settable. Every field may
+/// be left out of JSON input; [`validate`] reports the ones a signal
+/// needs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SignalInput {
     pub source: String,
     pub service: Option<String>,
@@ -96,15 +158,16 @@ pub struct SignalInput {
     /// Caller may supply an explicit dedup key; if absent, core computes
     /// one from (source, event_type, title, environment).
     pub dedup_key: Option<String>,
+    /// `trigger` unless set. An `acknowledge` or `resolve` needs the
+    /// alert's dedup key, given or computed from the same fields.
+    #[serde(default)]
+    pub action: Action,
 }
 
 impl Signal {
     pub fn from_input(input: SignalInput) -> Self {
         let timestamp = Utc::now();
-        let dedup_key = input
-            .dedup_key
-            .clone()
-            .unwrap_or_else(|| compute_dedup_key(&input));
+        let dedup_key = input.effective_dedup_key();
 
         Signal {
             id: Uuid::new_v4(),
@@ -124,6 +187,7 @@ impl Signal {
             metadata: input.metadata.unwrap_or_else(default_metadata),
             timestamp,
             dedup_key: Some(dedup_key),
+            action: input.action,
         }
     }
 }
@@ -157,7 +221,23 @@ pub enum SignalError {
     Internal(String),
 }
 
+/// Checks the fields a signal needs. An `acknowledge` or `resolve` may
+/// give just its `dedup_key`; the client fills in the rest (see
+/// [`SignalInput::fill_lifecycle_defaults`]).
 pub fn validate(input: &SignalInput) -> Result<(), SignalError> {
+    if input.action.is_lifecycle() {
+        match input.dedup_key.as_deref() {
+            Some(key) if !key.trim().is_empty() => return Ok(()),
+            Some(_) => {
+                return Err(SignalError::Validation(format!(
+                    "dedup_key must not be blank for {}",
+                    input.action
+                )))
+            }
+            // Falls through: the key is computed from the fields below.
+            None => {}
+        }
+    }
     if input.source.trim().is_empty() {
         return Err(SignalError::Validation("source must not be empty".into()));
     }
@@ -170,6 +250,35 @@ pub fn validate(input: &SignalInput) -> Result<(), SignalError> {
         return Err(SignalError::Validation("title must not be empty".into()));
     }
     Ok(())
+}
+
+impl SignalInput {
+    /// Gives an `acknowledge` or `resolve` sent with only its dedup key
+    /// the fields every provider needs: `source` "opssignal",
+    /// `event_type` the action, and `title` the alert's (`known_title`,
+    /// from when it was raised) or else the key.
+    pub fn fill_lifecycle_defaults(&mut self, known_title: Option<&str>) {
+        if self.source.trim().is_empty() {
+            self.source = "opssignal".into();
+        }
+        if self.event_type.trim().is_empty() {
+            self.event_type = self.action.to_string();
+        }
+        if self.title.trim().is_empty() {
+            self.title = known_title
+                .map(str::to_string)
+                .or_else(|| self.dedup_key.clone())
+                .unwrap_or_default();
+        }
+    }
+
+    /// The dedup key this input's signal gets: the given one, or the
+    /// one computed from its fields.
+    pub fn effective_dedup_key(&self) -> String {
+        self.dedup_key
+            .clone()
+            .unwrap_or_else(|| compute_dedup_key(self))
+    }
 }
 
 #[cfg(test)]
@@ -321,5 +430,56 @@ mod tests {
             Signal::from_input(valid_input()).metadata,
             serde_json::json!({})
         );
+    }
+
+    #[test]
+    fn action_defaults_to_trigger_and_parses() {
+        let input: SignalInput = serde_json::from_str(
+            r#"{"source":"ci","event_type":"e","title":"t","severity":"info"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.action, Action::Trigger);
+        let input: SignalInput = serde_json::from_str(
+            r#"{"source":"ci","event_type":"e","title":"t","severity":"info","action":"resolve"}"#,
+        )
+        .unwrap();
+        assert_eq!(Signal::from_input(input).action, Action::Resolve);
+        assert_eq!("ACK".parse::<Action>().unwrap(), Action::Acknowledge);
+        assert!("close".parse::<Action>().is_err());
+    }
+
+    #[test]
+    fn lifecycle_signal_needs_only_a_dedup_key() {
+        let mut input = SignalInput {
+            action: Action::Resolve,
+            dedup_key: Some("airflow:etl.load".into()),
+            ..Default::default()
+        };
+        assert!(validate(&input).is_ok());
+        input.fill_lifecycle_defaults(Some("Load failed"));
+        assert_eq!(input.source, "opssignal");
+        assert_eq!(input.event_type, "resolve");
+        assert_eq!(input.title, "Load failed");
+
+        let mut bare = SignalInput {
+            action: Action::Acknowledge,
+            dedup_key: Some("k".into()),
+            ..Default::default()
+        };
+        bare.fill_lifecycle_defaults(None);
+        assert_eq!(bare.title, "k");
+
+        // Without a key, a resolve needs the fields the key is computed from.
+        let keyless = SignalInput {
+            action: Action::Resolve,
+            ..Default::default()
+        };
+        assert!(validate(&keyless).is_err());
+        let blank_key = SignalInput {
+            action: Action::Resolve,
+            dedup_key: Some("  ".into()),
+            ..Default::default()
+        };
+        assert!(validate(&blank_key).is_err());
     }
 }

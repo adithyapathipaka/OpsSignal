@@ -112,7 +112,10 @@ fn a_team_file_inherits_the_default_and_overrides_by_name() {
     let webhook = config.providers.webhook.expect("webhook");
     assert_eq!(webhook.url, "https://hooks.example.test/payments");
     let slack = config.providers.slack.expect("slack inherited");
-    assert_eq!(slack.webhook_url, "https://hooks.example.test/org");
+    assert_eq!(
+        slack.webhook_url.as_deref(),
+        Some("https://hooks.example.test/org")
+    );
     // The team's own route first, then the defaults it inherits.
     assert_eq!(
         route_sources(&config.routes),

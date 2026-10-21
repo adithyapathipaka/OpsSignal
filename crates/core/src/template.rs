@@ -44,6 +44,7 @@ pub const SIGNAL_VARIABLES: &[&str] = &[
     "metadata",
     "timestamp",
     "dedup_key",
+    "action",
 ];
 
 /// The parts each provider lets a template replace, and any variables

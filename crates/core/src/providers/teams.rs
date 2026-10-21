@@ -37,8 +37,14 @@ impl TeamsProvider {
     }
 
     fn card_for(&self, signal: &Signal) -> serde_json::Value {
-        let title = template::render(&self.templates, "title", signal, &[])
-            .unwrap_or_else(|| signal.title.clone());
+        let title =
+            template::render(&self.templates, "title", signal, &[]).unwrap_or_else(|| match signal
+                .action
+                .label()
+            {
+                Some(label) => format!("{label}: {}", signal.title),
+                None => signal.title.clone(),
+            });
         let message = template::render(&self.templates, "text", signal, &[])
             .or_else(|| signal.message.clone());
         let mut body = vec![serde_json::json!({
@@ -46,7 +52,10 @@ impl TeamsProvider {
             "text": title,
             "weight": "bolder",
             "size": "medium",
-            "color": Self::color_for(signal.severity),
+            "color": match signal.action {
+                crate::signal::Action::Trigger => Self::color_for(signal.severity),
+                _ => "good",
+            },
             "wrap": true,
         })];
         if let Some(message) = message {

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from opssignal.integrations.airflow import _safe_get, failure_callback
+from opssignal.integrations.airflow import _safe_get, failure_callback, success_callback
 
 
 class TestSafeGet:
@@ -56,3 +56,28 @@ class TestFailureCallback:
             failure_callback(ctx)
         _, kwargs = mock_notify.call_args
         assert "unknown" in kwargs["title"]
+
+
+class TestSuccessCallback:
+    def _make_context(self, try_number=2):
+        dag_run = SimpleNamespace(dag_id="my_dag", run_id="run_1")
+        task_instance = SimpleNamespace(task_id="my_task", try_number=try_number)
+        return {"dag_run": dag_run, "task_instance": task_instance}
+
+    def test_resolves_with_the_failure_alerts_fields(self):
+        with patch("opssignal.integrations.airflow.notify") as mock_notify:
+            failure_callback(self._make_context())
+        with patch("opssignal.integrations.airflow.resolve") as mock_resolve:
+            success_callback(self._make_context())
+        failure = mock_notify.call_args.kwargs
+        resolved = mock_resolve.call_args.kwargs
+        # Same source, event_type, title and environment: same dedup key.
+        for field in ("source", "event_type", "title", "environment"):
+            assert resolved[field] == failure[field]
+        assert resolved["message"] == "Succeeded on try 2"
+
+    def test_empty_context_does_not_raise(self):
+        with patch("opssignal.integrations.airflow.resolve") as mock_resolve:
+            success_callback({})
+        assert "unknown" in mock_resolve.call_args.kwargs["title"]
+        assert mock_resolve.call_args.kwargs["message"] == "Succeeded"

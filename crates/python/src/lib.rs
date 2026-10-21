@@ -6,7 +6,7 @@
 //! things fail."
 
 use opssignal_core::providers::external::{register_cloud_sender, ExternalSender};
-use opssignal_core::signal::{Severity, SignalInput};
+use opssignal_core::signal::{Action, Severity, SignalInput};
 use opssignal_core::source::{register_cloud_fetcher, ExternalFetcher};
 use opssignal_core::SignalClient;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -87,18 +87,24 @@ fn client(py: Python<'_>) -> PyResult<&'static SignalClient> {
 /// notify(source, event_type, title, severity="info", message=None,
 ///         environment=None, *, service=None, component=None, team=None,
 ///         run_id=None, correlation_id=None, trace_id=None, log_url=None,
-///         metadata=None, dedup_key=None)
+///         metadata=None, dedup_key=None, action="trigger")
 ///
 /// Validates the signal, then hands it to the process-global
 /// SignalClient with fire-and-forget semantics (`notify_async`).
 /// `metadata` is any JSON-serialisable object, usually a dict. Raises
 /// ValueError for invalid input and RuntimeError if signal.yaml cannot
 /// be loaded.
+///
+/// `action` is "trigger", "acknowledge" or "resolve"; the last two act
+/// on the alert with the same dedup key and may leave source,
+/// event_type and title empty when dedup_key is given. An unknown
+/// action raises ValueError: guessing could page someone for an alert
+/// meant to be closed.
 #[pyfunction]
 #[pyo3(signature = (
     source, event_type, title, severity="info", message=None, environment=None, *,
     service=None, component=None, team=None, run_id=None, correlation_id=None,
-    trace_id=None, log_url=None, metadata=None, dedup_key=None,
+    trace_id=None, log_url=None, metadata=None, dedup_key=None, action="trigger",
 ))]
 #[allow(clippy::too_many_arguments)]
 fn notify(
@@ -118,7 +124,11 @@ fn notify(
     log_url: Option<String>,
     metadata: Option<&Bound<'_, PyAny>>,
     dedup_key: Option<String>,
+    action: &str,
 ) -> PyResult<()> {
+    let action = action
+        .parse::<Action>()
+        .map_err(|e| PyValueError::new_err(format!("invalid signal: {e}")))?;
     // Unknown severities fall back to Info rather than raising — the
     // Python binding prioritises leniency over strictness here so that
     // a misconfigured severity string never silences an alert.
@@ -145,6 +155,7 @@ fn notify(
         log_url,
         metadata,
         dedup_key,
+        action,
     };
 
     opssignal_core::signal::validate(&input)

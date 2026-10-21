@@ -41,6 +41,10 @@ default_args = {
 }
 ```
 
+Add `"on_success_callback": success_callback` (from the same module) to
+resolve the failure alert once the task succeeds; see
+[Acknowledge and resolve](lifecycle.md).
+
 `notify()` also takes the rest of the signal's context as keyword arguments:
 `service`, `component`, `team`, `run_id`, `correlation_id`, `trace_id`,
 `log_url`, `dedup_key`, and `metadata` (any JSON-serialisable object, usually a

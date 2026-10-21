@@ -87,11 +87,27 @@ nothing is recorded. Credentials in a payload, such as PagerDuty's
 body. Exits `2` on bad input, a config that fails to load, or a `--provider`
 that isn't configured.
 
+## `opssignal resolve` and `opssignal acknowledge`
+
+!!! info "Added in v1.0.0-beta.3"
+    Resolve or acknowledge an alert raised earlier. See
+    [Acknowledge and resolve](lifecycle.md).
+
+```bash
+opssignal resolve --dedup-key etl:nightly --message "Backfilled"
+```
+
+Name the alert with `--dedup-key`, or with the `--source`, `--event-type`,
+`--title` and `--environment` it was raised with. `--message` adds a note.
+The command waits for delivery like `notify` and uses the same exit codes.
+When there is no open alert to act on and no route to PagerDuty or Opsgenie,
+nothing is sent: stderr shows `skipped: ...` and the exit code is `0`.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Delivered, or held back by a route's [`dedup` or `rate_limit`](configuration.md#dedup-and-rate-limits) (stderr then shows `suppressed: ...` with the reason). A signal held for a [digest](configuration.md#grouping-and-digests) counts by how the digest went. |
+| `0` | Delivered, or held back by a route's [`dedup` or `rate_limit`](configuration.md#dedup-and-rate-limits) (stderr then shows `suppressed: ...` with the reason), or an acknowledge or resolve with nothing to act on (`skipped: ...`). A signal held for a [digest](configuration.md#grouping-and-digests) counts by how the digest went. |
 | `1` | Delivery failed or timed out, or a [`fanout`](configuration.md#delivery-modes) route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result. |
 | `2` | Bad input (blank title, unknown severity) or a config that fails to load. |
 

@@ -1,5 +1,5 @@
 use crate::delivery::Provider;
-use crate::signal::{Severity, Signal, SignalError};
+use crate::signal::{Action, Severity, Signal, SignalError};
 use crate::template::{self, Templates};
 
 /// Alert API endpoint for US-hosted accounts. EU accounts use
@@ -15,10 +15,13 @@ const MAX_SOURCE_CHARS: usize = 100;
 const MAX_ENTITY_CHARS: usize = 512;
 const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 50;
+const MAX_NOTE_CHARS: usize = 25000;
 
 /// Creates an Opsgenie alert through the Alert API. The signal's
 /// `dedup_key` becomes the alert `alias`, so a repeat of the same
-/// signal adds to the open alert's count instead of opening a new one.
+/// signal adds to the open alert's count instead of opening a new one,
+/// and an `acknowledge` or `resolve` signal acknowledges or closes the
+/// alert with that alias.
 pub struct OpsgenieProvider {
     api_key: String,
     pub url: String,
@@ -141,6 +144,41 @@ impl OpsgenieProvider {
     }
 }
 
+impl OpsgenieProvider {
+    /// Where to POST `signal` and what. A trigger creates an alert; an
+    /// `acknowledge` or `resolve` acts on the alert whose alias is the
+    /// signal's dedup key, with the signal's message (or title) as the
+    /// note.
+    fn request_for(&self, signal: &Signal) -> Result<(String, serde_json::Value), SignalError> {
+        let verb = match signal.action {
+            Action::Trigger => return Ok((self.url.clone(), self.alert_for(signal))),
+            Action::Acknowledge => "acknowledge",
+            Action::Resolve => "close",
+        };
+        let alias = truncate(
+            signal.dedup_key.as_deref().unwrap_or_default(),
+            MAX_ALIAS_CHARS,
+        );
+        let mut url = reqwest::Url::parse(&self.url)
+            .map_err(|e| SignalError::Delivery(format!("invalid opsgenie url: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|()| SignalError::Delivery("invalid opsgenie url".into()))?
+            .pop_if_empty()
+            .push(&alias)
+            .push(verb);
+        url.query_pairs_mut().append_pair("identifierType", "alias");
+        let note = signal
+            .message
+            .clone()
+            .unwrap_or_else(|| signal.title.clone());
+        let body = serde_json::json!({
+            "source": truncate(&signal.source, MAX_SOURCE_CHARS),
+            "note": truncate(&note, MAX_NOTE_CHARS),
+        });
+        Ok((url.to_string(), body))
+    }
+}
+
 fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         Some((end, _)) => s[..end].to_string(),
@@ -154,20 +192,37 @@ impl Provider for OpsgenieProvider {
         "opsgenie"
     }
 
+    fn resolves_by_key(&self) -> bool {
+        true
+    }
+
     fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
-        Some(self.alert_for(signal))
+        match signal.action {
+            Action::Trigger => Some(self.alert_for(signal)),
+            _ => self
+                .request_for(signal)
+                .ok()
+                .map(|(url, body)| serde_json::json!({ "url": url, "body": body })),
+        }
     }
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
+        let (url, body) = self.request_for(signal)?;
         let resp = self
             .client
-            .post(&self.url)
+            .post(&url)
             .header("Authorization", format!("GenieKey {}", self.api_key))
-            .json(&self.alert_for(signal))
+            .json(&body)
             .send()
             .await
             .map_err(|e| SignalError::Delivery(e.to_string()))?;
 
+        // No alert with that alias: nothing is open, which is what an
+        // acknowledge or close of an alert another host raised (or that
+        // never fired) should leave.
+        if signal.action.is_lifecycle() && resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
         if !resp.status().is_success() {
             return Err(SignalError::Delivery(format!(
                 "opsgenie alert API returned status {}",
@@ -350,5 +405,75 @@ mod tests {
         let alert = provider.alert_for(&signal(Severity::Error));
         assert_eq!(alert["message"], "orders: dbt model failed");
         assert_eq!(alert["description"], "DAG daily, try 2");
+    }
+
+    fn lifecycle(action: Action, key: &str) -> Signal {
+        let mut signal = signal(Severity::Error);
+        signal.action = action;
+        signal.dedup_key = Some(key.into());
+        signal
+    }
+
+    #[tokio::test]
+    async fn resolve_closes_the_alert_by_alias() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/alerts/airflow:etl%2Fload/close"))
+            .and(wiremock::matchers::query_param("identifierType", "alias"))
+            .and(header("authorization", "GenieKey k"))
+            .and(body_partial_json(serde_json::json!({
+                "source": "airflow",
+                "note": "model orders timed out",
+            })))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = OpsgenieProvider::new(
+            "k".into(),
+            Some(format!("{}/v2/alerts", server.uri())),
+            vec![],
+        );
+        provider
+            .send(&lifecycle(Action::Resolve, "airflow:etl/load"))
+            .await
+            .expect("202 is success");
+        assert!(provider.resolves_by_key());
+    }
+
+    #[tokio::test]
+    async fn acknowledge_of_an_unknown_alias_is_not_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/alerts/gone/acknowledge"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        OpsgenieProvider::new(
+            "k".into(),
+            Some(format!("{}/v2/alerts/", server.uri())),
+            vec![],
+        )
+        .send(&lifecycle(Action::Acknowledge, "gone"))
+        .await
+        .expect("nothing open to acknowledge");
+    }
+
+    #[tokio::test]
+    async fn resolve_server_error_is_a_delivery_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let err = OpsgenieProvider::new("k".into(), Some(server.uri()), vec![])
+            .send(&lifecycle(Action::Resolve, "k1"))
+            .await
+            .expect_err("500 must fail");
+        assert!(err.to_string().contains("500"));
     }
 }
