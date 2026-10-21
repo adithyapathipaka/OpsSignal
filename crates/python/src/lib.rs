@@ -171,8 +171,9 @@ fn to_json(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value
 
 /// flush(timeout=5.0) -> bool
 ///
-/// Waits up to `timeout` seconds for signals sent with notify() to
-/// finish delivering. Returns False if some were still in flight; they
+/// Sends the digests of any open groups (routes with `group_by` or
+/// `group_wait`), then waits up to `timeout` seconds for signals sent
+/// with notify() to finish delivering. Returns False if some were still in flight; they
 /// stay recorded as pending. Registered with atexit on import, so a
 /// script that ends right after notify() still delivers.
 #[pyfunction]

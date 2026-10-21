@@ -13,6 +13,20 @@ The Python packages use PEP 440 spelling for the same version, so
 Changes merged to `main` that are not in a release yet. They will ship in
 the next tag.
 
+### Added
+
+- **Grouping and digests:** a route can set `group_by` (signal fields or
+  `metadata.<key>`) and `group_wait` to hold matching signals and send one
+  digest per group instead of one message each, so a dbt run with 40 failing
+  tests posts once. The digest is a normal signal (title, member list,
+  highest severity, `metadata.digest` for templates) sent to the route's
+  providers in its `mode`; other routes still send at once. A grouped route's
+  `dedup` drops repeats before they join, and its `rate_limit` counts
+  digests. Members are stored as `grouped` and take the digest's outcome.
+  Flushing (Python `atexit`, C `signal_flush`, Rust drop) sends open groups,
+  and the new `opssignal notify-batch` sends newline-delimited JSON signals
+  and their digests in one run. Groups are per process.
+
 ## [1.0.0-beta.2] - 2026-10-21
 
 Second beta: send one signal to several places at once, shape each

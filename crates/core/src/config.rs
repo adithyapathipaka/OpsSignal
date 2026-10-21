@@ -546,6 +546,19 @@ impl Config {
                     )));
                 }
             }
+            if route.group_wait.is_some_and(|w| w.0.is_zero()) {
+                return Err(config_err(format!(
+                    "{at}: group_wait must be longer than 0s"
+                )));
+            }
+            for field in route.group_by.iter().flatten() {
+                if !crate::group::is_group_field(field) {
+                    return Err(config_err(format!(
+                        "{at}: cannot group_by '{field}' (use one of {}, or metadata.<key>)",
+                        crate::routing::GROUP_FIELDS.join(", ")
+                    )));
+                }
+            }
             for name in &route.providers {
                 if !known.contains(&name.as_str()) {
                     return Err(config_err(format!(
@@ -737,6 +750,37 @@ mod tests {
                 "    rate_limit: {max: 5, per: 1m, burst: 2}\n",
                 "unknown field `burst`",
             ),
+        ] {
+            let err = Config::from_yaml_str(&format!("{base}{extra}")).expect_err(extra);
+            assert!(err.to_string().contains(expect), "{extra}: {err}");
+        }
+    }
+
+    #[test]
+    fn route_grouping_parses() {
+        let yaml = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match: {}\n    providers: [webhook]\n    group_by: [source, metadata.dag_id]\n  - match: {}\n    providers: [webhook]\n    group_wait: 2m\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let grouped = &config.routes[0];
+        assert_eq!(
+            grouped.group_by.as_deref(),
+            Some(&["source".to_string(), "metadata.dag_id".to_string()][..])
+        );
+        assert_eq!(grouped.group_window(), Some(Duration::from_secs(30)));
+        assert_eq!(
+            config.routes[1].group_window(),
+            Some(Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn bad_grouping_is_rejected() {
+        let base = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match: {}\n    providers: [webhook]\n";
+        for (extra, expect) in [
+            ("    group_by: [sorce]\n", "cannot group_by 'sorce'"),
+            ("    group_by: [metadata.]\n", "cannot group_by 'metadata.'"),
+            ("    group_wait: 0s\n", "group_wait must be longer than 0s"),
+            ("    group_wait: soon\n", "invalid duration"),
+            ("    group_by: source\n", "invalid type"),
         ] {
             let err = Config::from_yaml_str(&format!("{base}{extra}")).expect_err(extra);
             assert!(err.to_string().contains(expect), "{extra}: {err}");

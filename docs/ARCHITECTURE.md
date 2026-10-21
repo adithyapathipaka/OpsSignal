@@ -100,14 +100,30 @@ ends `failed` is removed again so it can't suppress the next occurrence. Any
 error reading the history lets the signal through. Coordinating across hosts
 is deliberately not part of the embedded SDK.
 
+Routes that set `group_by` or `group_wait` do not add providers to the plan
+either; the plan lists them as grouped (`crates/core/src/group.rs`). After the
+signal is stored, the client adds it to the open group for the route and the
+signal's `group_by` values, held in the client's memory. The first member of a
+group starts a timer on the client's runtime; when it fires, or when the
+client is flushed, the group is closed and sent through that route alone as
+one digest, a signal built from the members with its own id. A group of one
+is sent as that signal. Only the route's `dedup` is checked per signal; its
+`rate_limit` is checked per digest, under a key of its own. A signal that only
+grouped routes take is stored as `grouped`, and its row takes the digest's
+outcome. Groups are per client, so per process: grouping across processes or
+hosts would need shared state and a single sender, which belongs in the
+control plane, not the embedded SDK.
+
 `notify_async` callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
 would cut them off. `SignalClient::flush(timeout)` waits for them, and every
 binding calls it on the way out: dropping a Rust `SignalClient` flushes for up
 to 5 seconds, the Python package registers `flush()` with `atexit`, and C
 hosts call `signal_flush(timeout_ms)` before exiting (the library holds a
-process-global client that is never dropped). The CLI uses `notify_sync`, so
-it has nothing in flight. A signal still undelivered when the wait runs out
+process-global client that is never dropped). A flush first sends every open
+group, so digests are not lost when a process ends before `group_wait` runs
+out. The CLI uses `notify_sync` and then `flush_groups`, so it has nothing in
+flight when it exits. A signal still undelivered when the wait runs out
 stays in the sink as `pending`.
 
 ## Signal model

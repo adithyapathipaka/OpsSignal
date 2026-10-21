@@ -318,3 +318,82 @@ fn template_typo_is_a_config_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown variable tilte"));
 }
+
+fn run_with_stdin(args: &[&str], dir: &TempDir, stdin: &str) -> Output {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_opssignal"))
+        .args(args)
+        .current_dir(&dir.0)
+        .env_remove("SIGNAL_CONFIG")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn opssignal");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("wait")
+}
+
+const GROUPED: &str = "routes:\n  - match: {}\n    providers: [console]\n    group_by: [run_id]\n    group_wait: 10m\n";
+
+fn batch(run: &str, n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"source":"dbt","event_type":"dbt_test_failed","severity":"error","title":"test {i} failed","run_id":"{run}"}}"#
+            ) + "\n"
+        })
+        .collect()
+}
+
+#[test]
+fn notify_batch_sends_one_digest_per_group_before_exiting() {
+    let dir = TempDir::new();
+    let config = dir.config(GROUPED);
+    let input = batch("r1", 5) + &batch("r2", 2);
+    let out = run_with_stdin(
+        &["--config", config.to_str().expect("utf8"), "notify-batch"],
+        &dir,
+        &input,
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("test 0 failed (+4 more)"), "{stdout}");
+    assert!(stdout.contains("test 0 failed (+1 more)"), "{stdout}");
+    assert!(
+        !stdout.contains("\ntest 3 failed"),
+        "members are not sent alone"
+    );
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .contains("sent 7 signal(s); 7 held for 2 group send(s)"));
+}
+
+#[test]
+fn notify_on_a_grouped_route_still_sends_before_exiting() {
+    let dir = TempDir::new();
+    let config = dir.config(GROUPED);
+    let out = run(&notify_args(config.to_str().expect("utf8"), &[]), &dir);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    // A group of one goes out as the signal itself.
+    assert!(String::from_utf8_lossy(&out.stdout).contains("main is red"));
+}
+
+#[test]
+fn notify_batch_with_a_bad_line_sends_nothing_and_exits_two() {
+    let dir = TempDir::new();
+    let config = dir.config(GROUPED);
+    let input = batch("r1", 2) + "{\"source\": \"dbt\"}\n";
+    let out = run_with_stdin(
+        &["--config", config.to_str().expect("utf8"), "notify-batch"],
+        &dir,
+        &input,
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("-:3: not a valid signal"));
+    assert!(out.stdout.is_empty());
+}

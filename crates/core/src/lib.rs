@@ -5,6 +5,7 @@ mod chain;
 mod cloud;
 pub mod config;
 pub mod delivery;
+pub mod group;
 mod inflight;
 pub mod providers;
 mod reload;
@@ -25,6 +26,7 @@ pub const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
 use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider, ProviderOutcome};
+use group::{Added, Closed, Groups, Member};
 use inflight::InFlight;
 use providers::{
     console::ConsoleProvider, email::EmailProvider, opsgenie::OpsgenieProvider,
@@ -39,6 +41,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use throttle::{Admission, Throttle};
+
+/// What a digest send needs from its client, owned, so the send can
+/// run on the client's runtime after the caller has moved on.
+struct GroupSender {
+    sink: Arc<dyn SignalSink>,
+    pipeline: SharedPipeline,
+    throttle: Option<Arc<Throttle>>,
+}
 
 /// The part of a client that a config reload replaces: the routing
 /// rules and the providers they name. Swapped as one unit, so a signal
@@ -137,7 +147,20 @@ impl Pipeline {
     ) -> Result<Vec<(String, Option<serde_json::Value>)>, SignalError> {
         let names: Vec<String> = match only {
             Some(name) => vec![name.to_string()],
-            None => self.routing.plan(signal).providers().cloned().collect(),
+            None => {
+                // A grouped route's providers would get a digest later;
+                // show them what this signal looks like on its own.
+                let plan = self.routing.plan(signal);
+                let mut names: Vec<String> = plan.providers().cloned().collect();
+                for (index, _) in &plan.grouped {
+                    for name in &self.routing.routes[*index].providers {
+                        if !names.contains(name) {
+                            names.push(name.clone());
+                        }
+                    }
+                }
+                names
+            }
         };
         names
             .into_iter()
@@ -178,6 +201,8 @@ pub struct SignalClient {
     /// could not be opened; routes then send without throttling.
     throttle: Option<Arc<Throttle>>,
     in_flight: Arc<InFlight>,
+    /// Signals held by routes that set `group_by` or `group_wait`.
+    groups: Arc<Groups>,
     pub runtime: tokio::runtime::Runtime,
 }
 
@@ -247,11 +272,13 @@ impl SignalClient {
                 None
             }
         };
+        let in_flight: Arc<InFlight> = Arc::default();
         Ok(SignalClient {
             sink,
             pipeline: Arc::new(RwLock::new(Arc::new(Pipeline::from_config(config)))),
             throttle,
-            in_flight: Arc::default(),
+            groups: Arc::new(Groups::new(Arc::clone(&in_flight))),
+            in_flight,
             runtime,
         })
     }
@@ -278,7 +305,13 @@ impl SignalClient {
         let pipeline = self.pipeline();
         // Also on the caller's thread, so dedup sees signals in the
         // order they were sent.
-        let (plan, admission) = plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+        let (plan, mut admission) =
+            plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+        if plan.targets.is_empty() {
+            self.settle_unsent(&pipeline, &plan, signal, &mut admission);
+            return;
+        }
+        self.hold(&pipeline, &plan, &signal, &mut admission, false);
         let throttle = self.throttle.clone();
         let guard = self.in_flight.start();
 
@@ -293,12 +326,111 @@ impl SignalClient {
         });
     }
 
-    /// Waits up to `timeout` for every [`SignalClient::notify_async`]
-    /// delivery started so far to finish. Returns false if some were
-    /// still running; those stay recorded as `pending`. Call it before
-    /// the process exits.
+    /// Sends every open group now, then waits up to `timeout` for every
+    /// [`SignalClient::notify_async`] delivery and digest started so
+    /// far to finish. Returns false if some were still running; those
+    /// stay recorded as `pending` (or `grouped`). Call it before the
+    /// process exits.
     pub fn flush(&self, timeout: Duration) -> bool {
+        for closed in self.groups.take_all() {
+            self.spawn_group(closed);
+        }
         self.in_flight.wait(timeout) == 0
+    }
+
+    /// Sends every open group now and waits up to `timeout` for them,
+    /// returning the outcome of each group that finished: the digest's,
+    /// or the signal's own for a group of one. For a caller that needs
+    /// to know, such as the CLI's exit code. Groups still sending when
+    /// the wait runs out carry on, and [`SignalClient::flush`] waits
+    /// for them.
+    pub fn flush_groups(&self, timeout: Duration) -> Vec<DeliveryResult> {
+        let handles: Vec<_> = self
+            .groups
+            .take_all()
+            .into_iter()
+            .map(|closed| self.spawn_group(closed))
+            .collect();
+        self.runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + timeout;
+            let mut results = Vec::new();
+            for handle in handles {
+                if let Ok(Ok(result)) = tokio::time::timeout_at(deadline, handle).await {
+                    results.push(result);
+                }
+            }
+            results
+        })
+    }
+
+    /// Stores the outcome of a signal no provider gets now: every
+    /// matching route held it back, or holds it for a digest. Grouping
+    /// comes after the row is written, so a digest's outcome is always
+    /// the last word on it.
+    fn settle_unsent(
+        &self,
+        pipeline: &Pipeline,
+        plan: &DeliveryPlan,
+        signal: Signal,
+        admission: &mut Admission,
+    ) -> DeliveryResult {
+        let result = summarize(plan, &[], None);
+        if let Err(e) = self.sink.complete(&signal, &result) {
+            tracing::error!("sink write failed: {e}");
+        }
+        self.hold(pipeline, plan, &signal, admission, true);
+        result
+    }
+
+    /// Adds `signal` to a group of each grouped route in `plan`, and
+    /// starts the timer of any group it opens.
+    fn hold(
+        &self,
+        pipeline: &Pipeline,
+        plan: &DeliveryPlan,
+        signal: &Signal,
+        admission: &mut Admission,
+        owns_row: bool,
+    ) {
+        for (index, _) in &plan.grouped {
+            let Some(route) = pipeline.routing.routes.get(*index) else {
+                continue;
+            };
+            let member = Member {
+                signal: signal.clone(),
+                admission: admission.split_off(route),
+                owns_row,
+            };
+            match self.groups.add(route, member) {
+                Added::Joined => {}
+                Added::Full(closed) => {
+                    self.spawn_group(closed);
+                }
+                Added::Opened { key, seq, wait } => {
+                    let groups = Arc::clone(&self.groups);
+                    let sender = self.group_sender();
+                    self.runtime.spawn(async move {
+                        tokio::time::sleep(wait).await;
+                        if let Some(closed) = groups.take(&key, seq) {
+                            sender.send(closed).await;
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    fn spawn_group(&self, closed: Closed) -> tokio::task::JoinHandle<DeliveryResult> {
+        let sender = self.group_sender();
+        self.runtime.spawn(async move { sender.send(closed).await })
+    }
+
+    fn group_sender(&self) -> GroupSender {
+        GroupSender {
+            sink: Arc::clone(&self.sink),
+            pipeline: Arc::clone(&self.pipeline),
+            throttle: self.throttle.clone(),
+        }
     }
 
     /// Blocking, bounded by timeout. Caller gets a definitive result.
@@ -306,6 +438,10 @@ impl SignalClient {
     /// differs. On a timeout, providers that already delivered still
     /// count, so a fan-out cut short reports `Partial` rather than
     /// `Failed`.
+    ///
+    /// A signal that only grouped routes take returns `Grouped` at once:
+    /// it goes out in a digest after the route's `group_wait`, or on
+    /// [`SignalClient::flush_groups`] or [`SignalClient::flush`].
     #[must_use = "check whether the signal was delivered"]
     pub fn notify_sync(
         &self,
@@ -316,8 +452,13 @@ impl SignalClient {
         let signal = Signal::from_input(input);
         record(self.sink.as_ref(), &signal);
         let pipeline = self.pipeline();
+        let (plan, mut admission) =
+            plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+        if plan.targets.is_empty() {
+            return Ok(self.settle_unsent(&pipeline, &plan, signal, &mut admission));
+        }
+        self.hold(&pipeline, &plan, &signal, &mut admission, false);
         let tracker = Tracker::new(&signal, self.sink.as_ref());
-        let (plan, admission) = plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
 
         let result = self.runtime.block_on(async {
             match tokio::time::timeout(timeout, deliver(&tracker, &plan, &pipeline.providers)).await
@@ -380,6 +521,67 @@ fn plan_signal(
 fn settle(throttle: Option<&Throttle>, admission: &Admission, result: &DeliveryResult) {
     if let (Some(t), DeliveryStatus::Failed) = (throttle, result.status) {
         t.release(admission);
+    }
+}
+
+impl GroupSender {
+    /// Sends a closed group through its route alone: as a digest, or
+    /// as the signal itself when the group holds just one. The route's
+    /// `rate_limit` is checked against digests here. Each member whose
+    /// stored row is waiting on the digest takes its outcome.
+    async fn send(self, closed: Closed) -> DeliveryResult {
+        let sink = self.sink.as_ref();
+        let route = &closed.route;
+        let single = closed.members.len() == 1;
+        let signal = if single {
+            closed.members[0].signal.clone()
+        } else {
+            let digest = group::digest(&closed);
+            record(sink, &digest);
+            digest
+        };
+
+        let mut admission = Admission::default();
+        let gate = match &self.throttle {
+            Some(t) => t.admit_digest(route, &signal, throttle::now_ms(), &mut admission),
+            None => Ok(()),
+        };
+        let plan = match gate {
+            Ok(()) => DeliveryPlan {
+                targets: route.targets(),
+                suppressed: Vec::new(),
+                grouped: Vec::new(),
+            },
+            Err(reason) => {
+                let line = format!("route {}: {reason}", route.describe());
+                tracing::info!("digest {} suppressed on {line}", signal.id);
+                DeliveryPlan {
+                    targets: Vec::new(),
+                    suppressed: vec![line],
+                    grouped: Vec::new(),
+                }
+            }
+        };
+
+        let pipeline = current(&self.pipeline);
+        let tracker = Tracker::new(&signal, sink);
+        let result = deliver(&tracker, &plan, &pipeline.providers).await;
+        settle(self.throttle.as_deref(), &admission, &result);
+        for member in &closed.members {
+            settle(self.throttle.as_deref(), &member.admission, &result);
+        }
+
+        if !single {
+            if let Err(e) = sink.complete(&signal, &result) {
+                tracing::error!("sink write failed: {e}");
+            }
+        }
+        for member in closed.members.iter().filter(|m| m.owns_row) {
+            if let Err(e) = sink.complete(&member.signal, &result) {
+                tracing::error!("sink write failed: {e}");
+            }
+        }
+        result
     }
 }
 
@@ -544,7 +746,10 @@ fn summarize(
         deliveries.extend(tried);
     }
 
-    let status = if plan.targets.is_empty() {
+    let status = if plan.targets.is_empty() && !plan.grouped.is_empty() {
+        // Held for a digest; the digest's outcome comes later.
+        DeliveryStatus::Grouped
+    } else if plan.targets.is_empty() {
         // Every matching route was suppressed; nothing was meant to go.
         errors = plan.suppressed.clone();
         DeliveryStatus::Skipped
@@ -562,6 +767,7 @@ fn summarize(
         attempts,
         deliveries,
         suppressed: plan.suppressed.clone(),
+        grouped: plan.grouped.iter().map(|(_, line)| line.clone()).collect(),
     }
 }
 
@@ -723,6 +929,8 @@ mod tests {
                 mode,
                 dedup: None,
                 rate_limit: None,
+                group_by: None,
+                group_wait: None,
             }],
         }
     }
@@ -1111,6 +1319,7 @@ mod tests {
         routing: RoutingConfig,
         db: &str,
     ) -> SignalClient {
+        let in_flight: Arc<InFlight> = Arc::default();
         SignalClient {
             sink: Arc::new(SqliteSink::open(db).expect("open sink")),
             pipeline: Arc::new(RwLock::new(Arc::new(Pipeline {
@@ -1118,7 +1327,8 @@ mod tests {
                 providers: registry(providers),
             }))),
             throttle: Some(Arc::new(Throttle::open(db).expect("open throttle"))),
-            in_flight: Arc::default(),
+            groups: Arc::new(Groups::new(Arc::clone(&in_flight))),
+            in_flight,
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -1667,6 +1877,247 @@ mod tests {
         assert!(client.flush(Duration::from_secs(5)));
         assert_eq!(pd.calls(), 1);
         drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    /// Keeps the title of every signal it is sent.
+    #[derive(Default)]
+    struct Capture {
+        titles: Mutex<Vec<String>>,
+    }
+
+    impl Capture {
+        fn titles(&self) -> Vec<String> {
+            self.titles.lock().expect("titles").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Capture {
+        fn name(&self) -> &'static str {
+            "slack"
+        }
+
+        async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
+            self.titles
+                .lock()
+                .expect("titles")
+                .push(signal.title.clone());
+            Ok(())
+        }
+    }
+
+    fn grouped(providers: &[&str], by: &[&str], wait: Duration) -> routing::Route {
+        routing::Route {
+            group_by: Some(by.iter().map(|f| f.to_string()).collect()),
+            group_wait: Some(routing::Window(wait)),
+            ..route(providers, routing::DeliveryMode::Failover)
+                .routes
+                .remove(0)
+        }
+    }
+
+    fn run_input(run: &str, i: usize) -> SignalInput {
+        SignalInput {
+            source: "dbt".into(),
+            event_type: "dbt_test_failed".into(),
+            title: format!("test {i} failed"),
+            severity: Severity::Error,
+            run_id: Some(run.into()),
+            ..Default::default()
+        }
+    }
+
+    const LONG: Duration = Duration::from_secs(600);
+
+    #[test]
+    fn grouped_route_sends_one_digest_on_flush() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let routing = RoutingConfig {
+            routes: vec![grouped(&["slack"], &["run_id"], LONG)],
+        };
+        let client = client_with_routing(vec![slack.clone()], routing, &db);
+
+        for i in 0..40 {
+            client.notify_async(run_input("r1", i));
+        }
+        assert!(slack.titles().is_empty(), "held until the group closes");
+        assert!(client.flush(Duration::from_secs(5)));
+
+        assert_eq!(slack.titles(), vec!["test 0 failed (+39 more)".to_string()]);
+        // 40 members and the digest, all delivered.
+        let rows = stored_rows(&db);
+        assert_eq!(rows.len(), 41);
+        assert!(
+            rows.iter().all(|(status, _)| status == "delivered"),
+            "{rows:?}"
+        );
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn group_wait_sends_the_digest_without_a_flush() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let routing = RoutingConfig {
+            routes: vec![grouped(&["slack"], &[], Duration::from_secs(1))],
+        };
+        let client = client_with_routing(vec![slack.clone()], routing, &db);
+
+        for i in 0..3 {
+            let result = client
+                .notify_sync(run_input("r1", i), Duration::from_secs(5))
+                .expect("notify");
+            assert_eq!(result.status, DeliveryStatus::Grouped);
+            assert_eq!(
+                result.grouped,
+                vec!["route [slack]: held for a digest (group_wait 1s)".to_string()]
+            );
+            assert!(result.error.is_none());
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while slack.titles().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(slack.titles(), vec!["test 0 failed (+2 more)".to_string()]);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn each_group_by_value_gets_its_own_digest_and_one_is_sent_as_is() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let routing = RoutingConfig {
+            routes: vec![grouped(&["slack"], &["run_id"], LONG)],
+        };
+        let client = client_with_routing(vec![slack.clone()], routing, &db);
+
+        client.notify_async(run_input("r1", 0));
+        client.notify_async(run_input("r1", 1));
+        client.notify_async(run_input("r2", 2));
+        let results = client.flush_groups(Duration::from_secs(5));
+
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .all(|r| r.status == DeliveryStatus::Delivered));
+        let mut titles = slack.titles();
+        titles.sort();
+        assert_eq!(titles, vec!["test 0 failed (+1 more)", "test 2 failed"]);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_signal_also_sent_now_keeps_its_own_outcome() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let pd = FlakyProvider::new("pagerduty", 0);
+        let mut routing = route(&["pagerduty"], routing::DeliveryMode::Failover);
+        routing.routes.push(grouped(&["slack"], &[], LONG));
+        let client = client_with_routing(vec![slack.clone(), pd.clone()], routing, &db);
+
+        let result = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("notify");
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("pagerduty"));
+        assert_eq!(result.grouped.len(), 1);
+        assert_eq!(pd.calls(), 1);
+
+        assert_eq!(client.flush_groups(Duration::from_secs(5)).len(), 1);
+        assert_eq!(slack.titles(), vec!["dbt model failed".to_string()]);
+        assert_eq!(
+            stored_rows(&db),
+            vec![("delivered".to_string(), Some("pagerduty".to_string()))]
+        );
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn rate_limit_on_a_grouped_route_counts_digests() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let mut route = grouped(&["slack"], &["run_id"], LONG);
+        route.rate_limit = Some(serde_yaml::from_str("{max: 1, per: 1h}").expect("limit"));
+        let client = client_with_routing(
+            vec![slack.clone()],
+            RoutingConfig {
+                routes: vec![route],
+            },
+            &db,
+        );
+
+        // Ten members fit in one digest whatever the limit.
+        for i in 0..10 {
+            client.notify_async(run_input("r1", i));
+        }
+        let first = client.flush_groups(Duration::from_secs(5));
+        assert_eq!(first[0].status, DeliveryStatus::Delivered);
+
+        for i in 0..3 {
+            client.notify_async(run_input("r2", i));
+        }
+        let second = client.flush_groups(Duration::from_secs(5));
+        assert_eq!(second[0].status, DeliveryStatus::Skipped);
+        assert!(second[0].suppressed[0].contains("rate limit of 1 per 1h"));
+
+        assert_eq!(slack.titles().len(), 1);
+        let skipped = stored_rows(&db)
+            .into_iter()
+            .filter(|(status, _)| status == "skipped")
+            .count();
+        // The second digest and its three members.
+        assert_eq!(skipped, 4);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn dedup_on_a_grouped_route_keeps_repeats_out_of_the_digest() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let route = throttled(grouped(&["slack"], &[], LONG), Some("10m"), None);
+        let client = client_with_routing(
+            vec![slack.clone()],
+            RoutingConfig {
+                routes: vec![route],
+            },
+            &db,
+        );
+
+        for _ in 0..5 {
+            client.notify_async(input(Severity::Error));
+        }
+        client.notify_async(run_input("r1", 1));
+        assert!(client.flush(Duration::from_secs(5)));
+        assert_eq!(
+            slack.titles(),
+            vec!["dbt model failed (+1 more)".to_string()]
+        );
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn dropping_the_client_sends_open_groups() {
+        let db = temp_db();
+        let slack = Arc::new(Capture::default());
+        let client = client_with_routing(
+            vec![slack.clone()],
+            RoutingConfig {
+                routes: vec![grouped(&["slack"], &[], LONG)],
+            },
+            &db,
+        );
+        client.notify_async(run_input("r1", 0));
+        client.notify_async(run_input("r1", 1));
+        drop(client);
+        assert_eq!(slack.titles(), vec!["test 0 failed (+1 more)".to_string()]);
         let _ = std::fs::remove_file(&db);
     }
 }

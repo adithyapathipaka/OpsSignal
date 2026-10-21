@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess  # runs this interpreter only
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -170,3 +173,45 @@ class TestMain:
             assert main([str(FIXTURE), "--environment", "prod", "--max-signals", "2"]) == 0
             assert mock_notify.call_count == 2
             assert main([str(tmp_path / "missing.json")]) == 0
+
+
+class TestGrouping:
+    def test_failing_run_becomes_one_digest_on_a_grouped_route(self, tmp_path):
+        config = tmp_path / "signal.yaml"
+        config.write_text(
+            "routes:\n"
+            "  - match: {source: dbt}\n"
+            "    providers: [console]\n"
+            "    group_by: [run_id]\n"
+            "    group_wait: 10m\n"
+            f'storage:\n  path: "{tmp_path / "signals.db"}"\n'
+        )
+        results = {
+            "metadata": {"invocation_id": "inv-1"},
+            "results": [
+                {"status": "fail", "unique_id": f"test.shop.not_null_t{i}.abc"} for i in range(40)
+            ],
+        }
+        run_results = tmp_path / "run_results.json"
+        run_results.write_text(json.dumps(results))
+
+        # A fresh interpreter, because the client is built once per process.
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [
+                sys.executable,
+                "-m",
+                "opssignal.integrations.dbt",
+                str(run_results),
+                "--max-signals",
+                "0",
+            ],
+            env={**os.environ, "SIGNAL_CONFIG": str(config)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert out.returncode == 0, out.stderr
+        lines = [line for line in out.stdout.splitlines() if line.startswith("[signal:")]
+        assert lines == [
+            "[signal:dbt] error dbt_test_failed — dbt test failed: not_null_t0 (+39 more)"
+        ]

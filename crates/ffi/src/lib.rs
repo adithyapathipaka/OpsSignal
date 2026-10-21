@@ -94,9 +94,10 @@ pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult
     })
 }
 
-/// Waits up to `timeout_ms` for signals sent with `signal_notify_async`
-/// to finish delivering. Fails if some were still in flight; those stay
-/// recorded as pending. The library has no exit hook of its own (the
+/// Sends the digests of any open groups (routes with `group_by` or
+/// `group_wait`), then waits up to `timeout_ms` for signals sent with
+/// `signal_notify_async` to finish delivering. Fails if some were still
+/// in flight; those stay recorded as pending. The library has no exit hook of its own (the
 /// process-global client is never dropped), so hosts should call this
 /// before exiting.
 #[no_mangle]
