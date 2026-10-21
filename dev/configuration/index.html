@@ -1,0 +1,1653 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust-powered SDK for routing operational events to Slack, webhooks, and more">
+      
+      
+      
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/dev/configuration/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../providers/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Configuration - OpsSignal</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="OpsSignal" class="md-header__button md-logo" aria-label="OpsSignal" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OpsSignal
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/adithyapathipaka/OpsSignal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    adithyapathipaka/OpsSignal
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="OpsSignal" class="md-nav__button md-logo" aria-label="OpsSignal" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OpsSignal
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/adithyapathipaka/OpsSignal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    adithyapathipaka/OpsSignal
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-config-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where the config comes from
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where the config comes from">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installing-cloud-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing cloud support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remote-configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote configs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Remote configs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#managed-config-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed config services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#databases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Databases
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#live-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live reload
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layered-configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layered configs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        storage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables-in-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables in values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-from-a-secret-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets from a secret store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load-time-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load-time errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Providers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-config-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where the config comes from
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where the config comes from">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installing-cloud-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing cloud support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remote-configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote configs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Remote configs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#managed-config-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed config services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#databases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Databases
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#live-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live reload
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layered-configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layered configs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        storage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables-in-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables in values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-from-a-secret-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets from a secret store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load-time-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load-time errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h1>
+<h2 id="where-the-config-comes-from">Where the config comes from<a class="headerlink" href="#where-the-config-comes-from" title="Permanent link">&para;</a></h2>
+<p>OpsSignal looks for its config in this order:</p>
+<ol>
+<li>
+<p>The <code>SIGNAL_CONFIG</code> environment variable. It can be a local path or a URL:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Source</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/etc/opssignal/signal.yaml</code></td>
+<td>local file</td>
+<td>Must exist, or loading fails.</td>
+</tr>
+<tr>
+<td><code>https://config.example.com/signal.yaml</code></td>
+<td>HTTPS <code>GET</code></td>
+<td>Plain <code>http://</code> is accepted only for <code>localhost</code>.</td>
+</tr>
+<tr>
+<td><code>s3://bucket/path/signal.yaml</code></td>
+<td>Amazon S3 (or any S3-compatible store)</td>
+<td>Python: <code>opssignal[aws]</code>.</td>
+</tr>
+<tr>
+<td><code>gs://bucket/path/signal.yaml</code></td>
+<td>Google Cloud Storage</td>
+<td>Python: <code>opssignal[gcp]</code>.</td>
+</tr>
+<tr>
+<td><code>az://container/path/signal.yaml</code></td>
+<td>Azure Blob Storage</td>
+<td>Python: <code>opssignal[azure]</code>. Set <code>AZURE_STORAGE_ACCOUNT_NAME</code> to the storage account.</td>
+</tr>
+<tr>
+<td><code>appconfig://application/environment/profile</code></td>
+<td>AWS AppConfig</td>
+<td>Python: <code>opssignal[aws]</code>. See <a href="#managed-config-services">Managed config services</a>.</td>
+</tr>
+<tr>
+<td><code>azappconfig://store/key?label=prod</code></td>
+<td>Azure App Configuration</td>
+<td>Python: <code>opssignal[azure]</code>. <code>?label=</code> is optional.</td>
+</tr>
+<tr>
+<td><code>dynamodb://table/id</code></td>
+<td>Amazon DynamoDB item</td>
+<td>Python: <code>opssignal[aws]</code>. See <a href="#databases">Databases</a>.</td>
+</tr>
+<tr>
+<td><code>firestore://project/collection/document</code></td>
+<td>Firestore document</td>
+<td>Python: <code>opssignal[gcp]</code>.</td>
+</tr>
+<tr>
+<td><code>cosmos://account/database/container/id</code></td>
+<td>Azure Cosmos DB item</td>
+<td>Python: <code>opssignal[azure]</code>.</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p><code>./signal.yaml</code> in the current working directory.</p>
+</li>
+<li>Nothing found: the zero-config default (console provider, SQLite sink at
+   <code>./signals.db</code>).</li>
+</ol>
+<p><code>SIGNAL_CONFIG</code> can also list several files, separated by commas, which are
+merged as described in <a href="#layered-configs">Layered configs</a>. The CLI also
+accepts <code>--config &lt;path or URL&gt;</code> (or a comma-separated list), which overrides
+both.</p>
+<h3 id="installing-cloud-support">Installing cloud support<a class="headerlink" href="#installing-cloud-support" title="Permanent link">&para;</a></h3>
+<p><code>pip install opssignal</code> reads local files and HTTPS only. Each cloud is a pip
+extra that installs a small native add-on, which <code>opssignal</code> finds on its own:</p>
+<table>
+<thead>
+<tr>
+<th>Install</th>
+<th>Adds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pip install 'opssignal[aws]'</code></td>
+<td><code>s3://</code>, <code>appconfig://</code>, <code>dynamodb://</code>, <code>${aws-sm:...}</code> secrets, <a href="../providers/#amazon-ses-api">email through the SES API</a></td>
+</tr>
+<tr>
+<td><code>pip install 'opssignal[gcp]'</code></td>
+<td><code>gs://</code>, <code>firestore://</code>, <code>${gcp-sm:...}</code> secrets</td>
+</tr>
+<tr>
+<td><code>pip install 'opssignal[azure]'</code></td>
+<td><code>az://</code>, <code>azappconfig://</code>, <code>cosmos://</code>, <code>${azure-kv:...}</code> secrets</td>
+</tr>
+<tr>
+<td><code>pip install 'opssignal[all]'</code></td>
+<td>all three</td>
+</tr>
+</tbody>
+</table>
+<p>If <code>SIGNAL_CONFIG</code> names a cloud whose extra isn't installed, the first
+<code>notify()</code> raises <code>RuntimeError</code> naming the extra to install (the CLI exits
+with code 2 and names the feature to build with). That is treated
+as a setup mistake, so it fails straight away instead of falling back.</p>
+<p>The CLI and the C library follow the same rule: the base build reads local
+files and HTTPS only, and each cloud is added on top of it with a cargo
+feature named like the pip extra:</p>
+<table>
+<thead>
+<tr>
+<th>Build</th>
+<th>Adds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cargo build -p opssignal-cli --features aws</code></td>
+<td><code>s3://</code>, <code>appconfig://</code>, <code>dynamodb://</code>, <code>${aws-sm:...}</code>, email through the SES API</td>
+</tr>
+<tr>
+<td><code>cargo build -p opssignal-cli --features gcp</code></td>
+<td><code>gs://</code>, <code>firestore://</code>, <code>${gcp-sm:...}</code></td>
+</tr>
+<tr>
+<td><code>cargo build -p opssignal-cli --features azure</code></td>
+<td><code>az://</code>, <code>azappconfig://</code>, <code>cosmos://</code>, <code>${azure-kv:...}</code></td>
+</tr>
+<tr>
+<td><code>cargo build -p opssignal-cli --features all</code></td>
+<td>all three</td>
+</tr>
+</tbody>
+</table>
+<p>The same features exist on <code>opssignal-ffi</code> for the C library. If you depend on
+the <code>opssignal-core</code> crate directly, the features are <code>aws</code>, <code>gcp</code> and <code>azure</code>;
+without them the core reads files and HTTPS only.</p>
+<h2 id="remote-configs">Remote configs<a class="headerlink" href="#remote-configs" title="Permanent link">&para;</a></h2>
+<p>One <code>signal.yaml</code> in a bucket can serve every service. Each process sets
+<code>SIGNAL_CONFIG</code> to the same URL and keeps its secrets in its own environment
+(see <a href="#environment-variables-in-values">Environment variables in values</a>), so
+the shared file never holds a token.</p>
+<p><strong>Credentials.</strong> OpsSignal uses each platform's standard credential chain and
+has no keys of its own:</p>
+<ul>
+<li><strong>S3:</strong> <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>, web identity (EKS IRSA),
+  ECS task roles, or the EC2 instance profile. Set <code>AWS_REGION</code> to the bucket's
+  region. <code>AWS_ENDPOINT_URL</code> points it at MinIO or another S3-compatible store.</li>
+<li><strong>GCS:</strong> <code>GOOGLE_APPLICATION_CREDENTIALS</code> or <code>GOOGLE_SERVICE_ACCOUNT</code>,
+  gcloud application-default credentials, then the metadata server (GKE
+  workload identity, GCE service accounts).</li>
+<li><strong>Azure:</strong> AKS workload identity (<code>AZURE_FEDERATED_TOKEN_FILE</code>, set by the
+  workload identity webhook), managed identity, a service principal
+  (<code>AZURE_CLIENT_ID</code>/<code>AZURE_CLIENT_SECRET</code>/<code>AZURE_TENANT_ID</code>), a SAS token
+  (<code>AZURE_STORAGE_SAS_KEY</code>) or an account key.</li>
+<li><strong>HTTPS:</strong> no authentication; use a URL that is reachable only from your
+  network, or a pre-signed URL.</li>
+</ul>
+<p>The process only needs read access to that one object (<code>s3:GetObject</code>,
+<code>storage.objects.get</code>, or the Storage Blob Data Reader role on Azure).</p>
+<h3 id="managed-config-services">Managed config services<a class="headerlink" href="#managed-config-services" title="Permanent link">&para;</a></h3>
+<p>AWS AppConfig and Azure App Configuration hold the same YAML as a file, and
+add change control a bucket doesn't have. AppConfig validates a change before
+it goes live, rolls it out gradually with a deployment strategy, and rolls it
+back automatically on a CloudWatch alarm. App Configuration keeps a label per
+environment, a revision history and snapshots, so a bad edit can be restored
+to an earlier value. Each team's file is one profile or key,
+and <code>extends:</code> works between them:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># appconfig://opssignal/prod/payments</span>
+<span class="nt">extends</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span><span class="w">          </span><span class="c1"># the "default" profile of the same application and environment</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># azappconfig://ops-config/opssignal/teams/payments?label=prod</span>
+<span class="nt">extends</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">../default</span><span class="w">       </span><span class="c1"># key opssignal/default, same store and label</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>AWS AppConfig</th>
+<th>Azure App Configuration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>URL</td>
+<td><code>appconfig://&lt;application&gt;/&lt;environment&gt;/&lt;profile&gt;</code> (names or IDs)</td>
+<td><code>azappconfig://&lt;store&gt;/&lt;key&gt;[?label=&lt;label&gt;]</code></td>
+</tr>
+<tr>
+<td>Credentials</td>
+<td>The AWS chain above</td>
+<td>Workload identity, service principal or managed identity, as above</td>
+</tr>
+<tr>
+<td>Permissions</td>
+<td><code>appconfig:StartConfigurationSession</code>, <code>appconfig:GetLatestConfiguration</code></td>
+<td>App Configuration Data Reader</td>
+</tr>
+<tr>
+<td>Endpoint override</td>
+<td><code>AWS_ENDPOINT_URL_APPCONFIGDATA</code></td>
+<td><code>AZURE_APPCONFIG_ENDPOINT</code>, with <code>{store}</code> in it, for sovereign clouds</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What polling costs.</strong> AppConfig bills for each configuration it sends, so
+OpsSignal keeps its polling session between checks: an unchanged profile
+returns an empty, unbilled answer. App Configuration is asked with the last
+ETag, so an unchanged key costs a request but no download. Each check is
+still one request per file per process, which matters on App Configuration's
+request quotas when thousands of pods poll: raise
+<code>SIGNAL_CONFIG_REFRESH_SECS</code> there if needed.</p>
+<p><strong>Cache and fallback.</strong> After every successful fetch, the raw file is cached on
+local disk, before <code>${VAR}</code> substitution, so no secret is ever written there.
+When the source can't be reached, times out (10 seconds), or returns a file
+that fails to load, OpsSignal uses the last good cached copy. If there is no
+cached copy either, it starts on the zero-config default (console only) and
+logs why, so a bucket outage never stops a service from starting or sending
+signals. It switches to the real config as soon as the source is back.</p>
+<h3 id="databases">Databases<a class="headerlink" href="#databases" title="Permanent link">&para;</a></h3>
+<p>Use a database when teams change their own routing through an internal UI or
+API instead of pull requests: the tool writes each team's YAML into one item,
+and OpsSignal reads it like a file. Writes, change history (DynamoDB Streams,
+the Cosmos DB change feed, Firestore triggers) and access control stay in the database. OpsSignal
+only ever reads.</p>
+<p>Each item holds the whole YAML of one file in a single string attribute,
+<code>config</code> by default:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>DynamoDB</th>
+<th>Firestore</th>
+<th>Cosmos DB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>URL</td>
+<td><code>dynamodb://&lt;table&gt;/&lt;id&gt;</code></td>
+<td><code>firestore://&lt;project&gt;/&lt;collection&gt;/&lt;document&gt;</code> (nested paths allowed)</td>
+<td><code>cosmos://&lt;account&gt;/&lt;database&gt;/&lt;container&gt;/&lt;id&gt;</code></td>
+</tr>
+<tr>
+<td>Item lookup</td>
+<td>String partition key <code>id</code> (<code>?key=</code> to rename); tables with a sort key are not supported</td>
+<td>Document path; <code>?database=</code> for a non-default database</td>
+<td>Item id; partition key value is the id, or <code>?pk=</code></td>
+</tr>
+<tr>
+<td>YAML attribute</td>
+<td><code>config</code> (<code>?value=</code> to rename)</td>
+<td>string field <code>config</code> (<code>?field=</code>)</td>
+<td>string property <code>config</code> (<code>?field=</code>)</td>
+</tr>
+<tr>
+<td>Permissions</td>
+<td><code>dynamodb:GetItem</code></td>
+<td><code>datastore.entities.get</code> (Cloud Datastore Viewer)</td>
+<td>Cosmos DB Built-in Data Reader (data-plane RBAC; account keys are not used)</td>
+</tr>
+<tr>
+<td>Endpoint override</td>
+<td><code>AWS_ENDPOINT_URL_DYNAMODB</code> (DynamoDB Local)</td>
+<td><code>FIRESTORE_EMULATOR_HOST</code></td>
+<td><code>AZURE_COSMOS_ENDPOINT</code>, with <code>{account}</code> in it</td>
+</tr>
+</tbody>
+</table>
+<p><code>extends:</code> names another item of the same table, database or container:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># dynamodb://opssignal-config/payments</span>
+<span class="nt">extends</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span><span class="w">          </span><span class="c1"># item "default" of the same table</span>
+</code></pre></div>
+<p>In Firestore a relative entry resolves like a path (<code>../shared/db-alerts</code> from
+<code>opssignal/payments</code>). In Cosmos DB the parent's partition key value is taken
+to be its id; use a full <code>cosmos://</code> URL with <code>?pk=</code> otherwise.</p>
+<p>Each check is one read per file per process: an eventually consistent
+<code>GetItem</code> (half a read unit), one Firestore document read, or one Cosmos DB
+point read (sent with the last ETag, so an unchanged item is a 304).</p>
+<h2 id="live-reload">Live reload<a class="headerlink" href="#live-reload" title="Permanent link">&para;</a></h2>
+<p>The config is re-read every 60 seconds and changes are applied without a
+restart, for local files and remote sources alike. A change replaces the
+routes and providers as one unit, so no signal sees new routes with old
+providers.</p>
+<p>A reload that can't be fetched or fails to load is skipped and logged, and the
+current config stays in place. A broken edit can't take alerting down.</p>
+<p>Changes to <code>storage</code> are not applied live, because reopening the sink under
+traffic could lose writes. They are logged and take effect on the next
+restart.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SIGNAL_CONFIG_REFRESH_SECS</code></td>
+<td><code>60</code></td>
+<td>Seconds between checks. <code>0</code> loads once and never reloads.</td>
+</tr>
+<tr>
+<td><code>SIGNAL_CONFIG_CACHE_DIR</code></td>
+<td><code>$XDG_CACHE_HOME/opssignal</code>, else <code>~/.cache/opssignal</code></td>
+<td>Where remote configs are cached.</td>
+</tr>
+</tbody>
+</table>
+<p>The CLI sends one signal and exits, so it loads the config once.</p>
+<p>See <a href="../kubernetes/">Kubernetes</a> for a ConfigMap and Secret setup that uses
+live reload.</p>
+<h2 id="layered-configs">Layered configs<a class="headerlink" href="#layered-configs" title="Permanent link">&para;</a></h2>
+<p>Large organisations rarely keep every route in one file. OpsSignal lets a file
+build on others, so a platform team can own a default and each team adds only
+what is its own:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># default.yaml, owned by the platform team</span>
+<span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="s">"${ORG_SLACK_WEBHOOK}"</span>
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">error</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">critical</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="nt">storage</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/opssignal/signals.db</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># teams/payments.yaml</span>
+<span class="nt">extends</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">../default.yaml</span>
+<span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">webhook</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="s">"${PAYMENTS_PAGER_URL}"</span>
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> source</span><span class="p">:</span><span class="w"> </span><span class="nv">payments</span><span class="p p-Indicator">,</span><span class="nt"> severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">webhook</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Point <code>SIGNAL_CONFIG</code> at the team file and the default comes with it.</p>
+<p>There are two ways to combine files, and they can be mixed:</p>
+<ul>
+<li><strong><code>extends:</code></strong> in a file names one parent, or a list of them. A relative
+  entry is resolved against the file's own location: the same directory, or
+  the same bucket or container for <code>s3://</code>, <code>gs://</code> and <code>az://</code>, or the same
+  site for <code>https://</code>. A URL or an absolute path is used as is.</li>
+<li><strong>A list in <code>SIGNAL_CONFIG</code></strong>, such as
+  <code>SIGNAL_CONFIG=teams/payments.yaml,shared/db-alerts.yaml</code>. Use this when a
+  service needs alerts that several teams share, without one team file having
+  to name another.</li>
+</ul>
+<p>Files are merged lowest priority first: parents before the file that extends
+them, and earlier entries of a list before later ones. A file reached more
+than once, such as a default that every team extends, is loaded once.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>How it merges</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>providers</code></td>
+<td>By name. A later file's <code>slack</code>, <code>webhook</code>, <code>pagerduty</code>, <code>teams</code> or <code>console</code> replaces the earlier one whole.</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>Added together. A later file's routes go first, so the more specific file is matched first and its providers are tried first, while the inherited routes still catch everything else.</td>
+</tr>
+<tr>
+<td><code>storage</code></td>
+<td>Taken from the last file that sets it.</td>
+</tr>
+</tbody>
+</table>
+<p>Because delivery stops at the first provider that succeeds (see
+<a href="#routes"><code>routes</code></a>), a team route that matches a signal effectively decides
+where it goes, and the inherited providers become its fallbacks. Routes are
+checked after merging, so a team file can route to a provider that only its
+parent configures. A route naming an unknown provider is reported with the
+file it is in, such as <code>teams/payments.yaml: routes[0] references provider
+'pagerduty'</code>.</p>
+<p>Rules that keep chains manageable:</p>
+<ul>
+<li>A cycle (<code>a.yaml</code> extends <code>b.yaml</code>, which extends <code>a.yaml</code>) is a load-time
+  error that shows the loop.</li>
+<li>A chain can be at most 8 files deep and load at most 64 files.</li>
+<li>A remote file can extend other remote files but not local paths, so a file
+  served over the network can never read the host's disk. A local file can
+  extend a remote one, such as a team ConfigMap that extends a default in a
+  bucket.</li>
+</ul>
+<p>Every file in the chain is reloaded and cached on its own. An edit to the
+default reaches every team on the next check. When a remote file can't be
+fetched, its cached copy is used; if the fresh files load but no longer fit
+together (a team routes to a provider someone just removed from the default),
+the cached copies of the whole chain are used instead. Only if neither works
+does OpsSignal start on the zero-config default. A missing or broken local
+file in the chain stops loading, as a single local file does.</p>
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="s">"${SLACK_WEBHOOK_URL}"</span>
+<span class="w">  </span><span class="nt">webhook</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="s">"https://ops.example.com/hooks/opssignal"</span>
+
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">error</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ci</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">webhook</span><span class="p p-Indicator">]</span>
+
+<span class="nt">storage</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">sink</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
+<span class="w">  </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="s">"./signals.db"</span>
+</code></pre></div>
+<p><code>signal.yaml</code> is gitignored in this repository. Commit only files that use
+<code>${VAR}</code> placeholders for secrets, like
+<a href="https://github.com/adithyapathipaka/OpsSignal/blob/main/python/examples/signal.example.yaml"><code>python/examples/signal.example.yaml</code></a>.</p>
+<h2 id="providers"><code>providers</code><a class="headerlink" href="#providers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>console</code></td>
+<td><code>enabled</code> (optional)</td>
+<td>Always registered, because it is the routing fallback. It cannot be turned off.</td>
+</tr>
+<tr>
+<td><code>slack</code></td>
+<td><code>webhook_url</code></td>
+<td>Slack incoming-webhook URL.</td>
+</tr>
+<tr>
+<td><code>webhook</code></td>
+<td><code>url</code></td>
+<td>Receives the full signal as a JSON <code>POST</code>.</td>
+</tr>
+<tr>
+<td><code>pagerduty</code></td>
+<td><code>routing_key</code>, <code>url</code> (optional)</td>
+<td>Triggers a PagerDuty alert through the Events API v2. <code>url</code> defaults to the US endpoint; EU accounts set <code>https://events.eu.pagerduty.com/v2/enqueue</code>.</td>
+</tr>
+<tr>
+<td><code>teams</code></td>
+<td><code>webhook_url</code></td>
+<td>Microsoft Teams Workflows (or legacy incoming) webhook URL. Posts an Adaptive Card.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="../providers/">Providers</a> describes what each one sends and how to get its
+URL or key.</p>
+<p>Unknown provider keys are rejected, so a typo such as <code>slak:</code> fails at load
+time instead of silently dropping a provider.</p>
+<h2 id="routes"><code>routes</code><a class="headerlink" href="#routes" title="Permanent link">&para;</a></h2>
+<p>Each route has a <code>match</code> block and a list of <code>providers</code>. Every condition in
+<code>match</code> must hold; an omitted condition matches anything.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Matches when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>severity</code></td>
+<td>list of <code>info</code>, <code>success</code>, <code>warning</code>, <code>error</code>, <code>critical</code></td>
+<td>the signal's severity is in the list</td>
+</tr>
+<tr>
+<td><code>environment</code></td>
+<td>string</td>
+<td>the signal's <code>environment</code> equals it</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>string</td>
+<td>the signal's <code>source</code> equals it</td>
+</tr>
+</tbody>
+</table>
+<p>The matching routes' providers form an ordered list (in file order, with
+consecutive duplicates removed). Delivery tries them in that order and
+<strong>stops at the first one that succeeds</strong>. Each provider gets up to 3
+attempts with exponential backoff before the next one is tried. Later
+providers are therefore fallbacks, not extra copies.</p>
+<p>If no route matches, the list is just <code>console</code>. That fallback is built into
+the routing engine and cannot be configured away.</p>
+<p>A route that names a provider not configured under <code>providers</code> is a load-time
+error, as is a route with an empty <code>providers</code> list.</p>
+<h2 id="storage"><code>storage</code><a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sink</code></td>
+<td><code>sqlite</code></td>
+<td>Only <code>sqlite</code> exists today. Postgres is on the roadmap.</td>
+</tr>
+<tr>
+<td><code>path</code></td>
+<td><code>./signals.db</code></td>
+<td>Created if missing.</td>
+</tr>
+</tbody>
+</table>
+<p>Every signal is written to the sink with its delivery status (<code>delivered</code> or
+<code>failed</code>), the provider that delivered it, and any error.</p>
+<h2 id="environment-variables-in-values">Environment variables in values<a class="headerlink" href="#environment-variables-in-values" title="Permanent link">&para;</a></h2>
+<p><code>${NAME}</code> anywhere in a string value is replaced with the value of the
+environment variable <code>NAME</code>. Several placeholders can appear in one value.</p>
+<ul>
+<li>An <strong>unset</strong> variable is a load-time error that names the variable. It is
+  never silently replaced with an empty string.</li>
+<li>Substitution happens after YAML parsing, so secrets that contain quotes,
+  colons or newlines can't break the file's structure.</li>
+</ul>
+<h2 id="secrets-from-a-secret-store">Secrets from a secret store<a class="headerlink" href="#secrets-from-a-secret-store" title="Permanent link">&para;</a></h2>
+<p>A placeholder whose name has a colon reads a secret store instead of the
+environment. It works in any file of the chain, local or remote:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="s">"${aws-sm:prod/opssignal#slack_url}"</span>
+<span class="w">  </span><span class="nt">webhook</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="s">"${azure-kv:ops-vault/pagerduty-hook}"</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Placeholder</th>
+<th>Reads</th>
+<th>Needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>${aws-sm:&lt;name or ARN&gt;}</code></td>
+<td>AWS Secrets Manager, current version</td>
+<td><code>opssignal[aws]</code></td>
+</tr>
+<tr>
+<td><code>${gcp-sm:&lt;project&gt;/&lt;secret&gt;[/&lt;version&gt;]}</code></td>
+<td>GCP Secret Manager, <code>latest</code> unless pinned</td>
+<td><code>opssignal[gcp]</code></td>
+</tr>
+<tr>
+<td><code>${azure-kv:&lt;vault&gt;/&lt;name&gt;[/&lt;version&gt;]}</code></td>
+<td>Azure Key Vault, current version unless pinned</td>
+<td><code>opssignal[azure]</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>#field</code> at the end reads one field of a JSON secret, so one secret can hold
+  several values (<code>${aws-sm:prod/opssignal#slack_url}</code>). Fields of one secret
+  share one read.</li>
+<li>A full ARN is read in its own region; a name is read in <code>AWS_REGION</code>.
+  <code>gcp-sm:</code> also takes the full <code>projects/&lt;p&gt;/secrets/&lt;s&gt;/versions/&lt;v&gt;</code> form.</li>
+<li>Credentials are the same chains as the cloud's config sources: IRSA, ECS and
+  instance roles on AWS; workload identity, <code>GOOGLE_APPLICATION_CREDENTIALS</code>
+  and the metadata server on GCP; workload identity, a service principal and
+  managed identity on Azure. The identity needs read access to the secret
+  only (<code>secretsmanager:GetSecretValue</code>, <code>roles/secretmanager.secretAccessor</code>,
+  or the Key Vault Secrets User role).</li>
+<li>Endpoint overrides, for private endpoints, sovereign clouds and emulators:
+  <code>AWS_ENDPOINT_URL_SECRETSMANAGER</code>, <code>GOOGLE_SECRET_MANAGER_ENDPOINT</code>, and
+  <code>AZURE_KEYVAULT_ENDPOINT</code> with <code>{vault}</code> in it.</li>
+</ul>
+<p><strong>Rotation.</strong> Each reload checks the secrets as well as the files, so a rotated
+secret takes effect without a restart, within <code>SIGNAL_SECRETS_TTL_SECS</code> plus
+one reload interval.</p>
+<p><strong>Cost.</strong> Every store bills per read (about $0.05 per 10,000 on AWS, $0.03 on
+GCP and Azure). Values are kept in memory for <code>SIGNAL_SECRETS_TTL_SECS</code>, 300 by
+default, so each process reads each secret about 8,600 times a month instead of
+43,000 at the 60-second reload interval. <code>0</code> reads on every reload.</p>
+<p><strong>Failures.</strong> A malformed reference, an unknown store, or a store whose extra
+isn't installed stops startup like any other config mistake. A store that
+can't be reached is treated like an unreachable remote file: at startup the
+client runs on the default config (console only) and picks the file up once
+the store answers; on reload the current config stays. Values are only held in
+memory. The <a href="#remote-configs">config cache</a> stores the file with its
+placeholders, never the secrets.</p>
+<h2 id="load-time-errors">Load-time errors<a class="headerlink" href="#load-time-errors" title="Permanent link">&para;</a></h2>
+<p>These all stop the config from loading, and the message says which rule failed:</p>
+<ul>
+<li>invalid YAML</li>
+<li>an unknown key anywhere in the file</li>
+<li>an unset <code>${VAR}</code>, or an unterminated or empty <code>${}</code> placeholder</li>
+<li>a <code>${store:...}</code> secret reference that is malformed, names an unknown store,
+  or needs an extra that isn't installed</li>
+<li>a route that references an unconfigured provider, or lists no providers</li>
+<li>an <code>extends</code> that is not a path or a list of paths, forms a cycle, goes more
+  than 8 files deep, or (from a remote file) names a local path</li>
+<li><code>SIGNAL_CONFIG</code> pointing at a path that is not a file, or using an
+  unsupported URL scheme</li>
+<li><code>SIGNAL_CONFIG_REFRESH_SECS</code> that is not a whole number</li>
+<li>a cloud URL whose support isn't installed (see
+  <a href="#installing-cloud-support">Installing cloud support</a>)</li>
+</ul>
+<p>A remote source that can't be fetched is not on this list: it falls back as
+described in <a href="#remote-configs">Remote configs</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

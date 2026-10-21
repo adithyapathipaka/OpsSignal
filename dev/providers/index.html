@@ -1,0 +1,1262 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust-powered SDK for routing operational events to Slack, webhooks, and more">
+      
+      
+      
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/dev/providers/">
+      
+      
+        <link rel="prev" href="../configuration/">
+      
+      
+        <link rel="next" href="../kubernetes/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Providers - OpsSignal</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#providers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="OpsSignal" class="md-header__button md-logo" aria-label="OpsSignal" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OpsSignal
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Providers
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/adithyapathipaka/OpsSignal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    adithyapathipaka/OpsSignal
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="OpsSignal" class="md-nav__button md-logo" aria-label="OpsSignal" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OpsSignal
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/adithyapathipaka/OpsSignal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    adithyapathipaka/OpsSignal
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Providers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Providers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pagerduty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PagerDuty
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#microsoft-teams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft Teams
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opsgenie" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opsgenie
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Email
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#amazon-ses-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon SES API
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pagerduty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PagerDuty
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#microsoft-teams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft Teams
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opsgenie" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opsgenie
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Email
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#amazon-ses-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon SES API
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="providers">Providers<a class="headerlink" href="#providers" title="Permanent link">&para;</a></h1>
+<p>A provider delivers a signal to one destination. Configure each one under
+<code>providers</code> in <code>signal.yaml</code>, then name it in a route. Keep credentials out of
+the file with <code>${VAR}</code> or a secret reference such as <code>${aws-sm:prod/opssignal#pd_key}</code>
+(see <a href="../configuration/#secrets-from-a-secret-store">Configuration</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Key</th>
+<th>Required fields</th>
+<th>Optional fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#console">Console</a></td>
+<td><code>console</code></td>
+<td>none</td>
+<td><code>enabled</code></td>
+</tr>
+<tr>
+<td><a href="#slack">Slack</a></td>
+<td><code>slack</code></td>
+<td><code>webhook_url</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><a href="#webhook">Webhook</a></td>
+<td><code>webhook</code></td>
+<td><code>url</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><a href="#pagerduty">PagerDuty</a></td>
+<td><code>pagerduty</code></td>
+<td><code>routing_key</code></td>
+<td><code>url</code></td>
+</tr>
+<tr>
+<td><a href="#microsoft-teams">Microsoft Teams</a></td>
+<td><code>teams</code></td>
+<td><code>webhook_url</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><a href="#opsgenie">Opsgenie</a></td>
+<td><code>opsgenie</code></td>
+<td><code>api_key</code></td>
+<td><code>url</code>, <code>tags</code></td>
+</tr>
+<tr>
+<td><a href="#email">Email</a></td>
+<td><code>email</code></td>
+<td><code>from</code>, <code>to</code>, and <code>smtp.host</code> or <code>ses</code></td>
+<td><code>cc</code>, <code>subject_prefix</code>, <code>smtp.port</code>, <code>smtp.username</code>, <code>smtp.password</code>, <code>smtp.tls</code>, <code>ses.region</code>, <code>ses.configuration_set</code></td>
+</tr>
+</tbody>
+</table>
+<p>All providers are in the base package. The one exception is email through
+the <a href="#amazon-ses-api">Amazon SES API</a>, which needs <code>opssignal[aws]</code>; email over
+SMTP, SES's SMTP endpoint included, needs no extra.</p>
+<p>A route's providers are tried in order and delivery <strong>stops at the first one
+that succeeds</strong>, so later providers are fallbacks, not extra copies. A route
+<code>providers: [pagerduty, teams]</code> pages through PagerDuty and posts to Teams only
+if PagerDuty could not be reached. Any non-2xx response or connection error is
+a failed attempt; each provider gets up to 3 attempts with backoff.</p>
+<h2 id="console">Console<a class="headerlink" href="#console" title="Permanent link">&para;</a></h2>
+<p>Prints one line per signal to stdout. It is always registered, because
+unmatched signals fall back to it, and cannot be turned off.</p>
+<h2 id="slack">Slack<a class="headerlink" href="#slack" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="s">"${SLACK_WEBHOOK_URL}"</span>
+</code></pre></div>
+<p>Posts the title, message and a severity emoji to a Slack
+<a href="https://api.slack.com/messaging/webhooks">incoming webhook</a>.</p>
+<h2 id="webhook">Webhook<a class="headerlink" href="#webhook" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">webhook</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="s">"https://alerts.example.com/opssignal"</span>
+</code></pre></div>
+<p><code>POST</code>s the full signal as JSON, with every field of the
+<a href="../reference/">signal model</a>.</p>
+<h2 id="pagerduty">PagerDuty<a class="headerlink" href="#pagerduty" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">pagerduty</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routing_key</span><span class="p">:</span><span class="w"> </span><span class="s">"${PAGERDUTY_ROUTING_KEY}"</span>
+<span class="w">    </span><span class="c1"># EU-hosted accounts only:</span>
+<span class="w">    </span><span class="c1"># url: "https://events.eu.pagerduty.com/v2/enqueue"</span>
+
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Triggers an alert through the
+<a href="https://developer.pagerduty.com/docs/events-api-v2/trigger-events/">Events API v2</a>.
+<code>routing_key</code> is the integration key of an <strong>Events API v2</strong> integration on a
+PagerDuty service (Service &gt; Integrations &gt; Add integration). <code>url</code> defaults to
+<code>https://events.pagerduty.com/v2/enqueue</code>.</p>
+<p>How a signal maps to the event:</p>
+<table>
+<thead>
+<tr>
+<th>PagerDuty field</th>
+<th>From the signal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dedup_key</code></td>
+<td><code>dedup_key</code> (the core computes one from source, event type, title and environment if the caller gives none), cut to 255 characters</td>
+</tr>
+<tr>
+<td><code>payload.summary</code></td>
+<td><code>title</code>, cut to 1024 characters</td>
+</tr>
+<tr>
+<td><code>payload.source</code></td>
+<td><code>source</code></td>
+</tr>
+<tr>
+<td><code>payload.severity</code></td>
+<td><code>severity</code>; <code>success</code> becomes <code>info</code></td>
+</tr>
+<tr>
+<td><code>payload.timestamp</code></td>
+<td><code>timestamp</code></td>
+</tr>
+<tr>
+<td><code>payload.component</code></td>
+<td><code>component</code>, if set</td>
+</tr>
+<tr>
+<td><code>payload.group</code></td>
+<td><code>service</code>, if set</td>
+</tr>
+<tr>
+<td><code>payload.class</code></td>
+<td><code>event_type</code></td>
+</tr>
+<tr>
+<td><code>payload.custom_details</code></td>
+<td><code>signal_id</code>, <code>event_type</code>, <code>severity</code>, and whichever of <code>message</code>, <code>environment</code>, <code>team</code>, <code>run_id</code>, <code>correlation_id</code>, <code>trace_id</code> and <code>metadata</code> are set</td>
+</tr>
+<tr>
+<td><code>links</code></td>
+<td><code>log_url</code>, if set, as "Logs"</td>
+</tr>
+</tbody>
+</table>
+<p>Because the dedup key is stable, the same failure sent again adds to the open
+alert instead of paging a second time. OpsSignal only triggers alerts; it
+does not acknowledge or resolve them.</p>
+<p>Route only the severities that should wake someone to PagerDuty. A route that
+sends <code>info</code> signals there will page on them.</p>
+<h2 id="microsoft-teams">Microsoft Teams<a class="headerlink" href="#microsoft-teams" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">teams</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="s">"${TEAMS_WEBHOOK_URL}"</span>
+
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">warning</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">error</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">teams</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Posts an <a href="https://adaptivecards.io/">Adaptive Card</a> to a Teams channel. Create
+the URL with the <strong>Workflows</strong> app: in the channel, choose
+<em>Workflows &gt; Post to a channel when a webhook request is received</em>, and copy the
+URL it gives you. Legacy Office 365 connector incoming-webhook URLs accept the
+same message, but Microsoft is retiring them.</p>
+<p>The card shows:</p>
+<ul>
+<li>the title, coloured by severity (red for <code>error</code> and <code>critical</code>, amber for
+  <code>warning</code>, green for <code>success</code>);</li>
+<li>the message, if set;</li>
+<li>facts for severity, source and event type, plus environment, service,
+  component, team and run ID when set;</li>
+<li>a <strong>View logs</strong> button when <code>log_url</code> is set.</li>
+</ul>
+<h2 id="opsgenie">Opsgenie<a class="headerlink" href="#opsgenie" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">opsgenie</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="s">"${OPSGENIE_API_KEY}"</span>
+<span class="w">    </span><span class="c1"># EU-hosted accounts only:</span>
+<span class="w">    </span><span class="c1"># url: "https://api.eu.opsgenie.com/v2/alerts"</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">data-platform</span><span class="p p-Indicator">]</span>
+
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">error</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">opsgenie</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Creates an alert through the
+<a href="https://docs.opsgenie.com/docs/alert-api#create-alert">Alert API</a>.
+<code>api_key</code> is the key of an <strong>API</strong> integration on the Opsgenie team that should
+receive the alert (Teams &gt; your team &gt; Integrations &gt; Add integration &gt; API).
+The team's routing rules and escalations decide who is notified. <code>url</code>
+defaults to <code>https://api.opsgenie.com/v2/alerts</code>.</p>
+<p>How a signal maps to the alert:</p>
+<table>
+<thead>
+<tr>
+<th>Opsgenie field</th>
+<th>From the signal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>message</code></td>
+<td><code>title</code>, cut to 130 characters</td>
+</tr>
+<tr>
+<td><code>alias</code></td>
+<td><code>dedup_key</code>, cut to 512 characters</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td><code>message</code>, followed by a "Logs:" line when <code>log_url</code> is set</td>
+</tr>
+<tr>
+<td><code>priority</code></td>
+<td><code>severity</code>: <code>critical</code> is P1, <code>error</code> P2, <code>warning</code> P3, <code>info</code> and <code>success</code> P5</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td><code>source</code></td>
+</tr>
+<tr>
+<td><code>entity</code></td>
+<td><code>service/component</code>, or whichever of the two is set</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>the configured <code>tags</code>, then the severity and the environment, up to 20</td>
+</tr>
+<tr>
+<td><code>details</code></td>
+<td><code>signal_id</code>, <code>event_type</code>, <code>severity</code>, <code>timestamp</code>, whichever of <code>environment</code>, <code>service</code>, <code>component</code>, <code>team</code>, <code>run_id</code>, <code>correlation_id</code>, <code>trace_id</code> and <code>log_url</code> are set, and each top-level <code>metadata</code> key as <code>metadata.&lt;key&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>Because the alias is stable, the same failure sent again raises the open
+alert's count instead of opening a second alert. OpsSignal only creates
+alerts; it does not acknowledge or close them.</p>
+<p>Atlassian is folding Opsgenie into Jira Service Management. Its operations
+alert API takes the same request, so a migrated team can point <code>url</code> at the
+endpoint shown on its JSM API integration and keep the rest of the config.</p>
+<h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">email</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="s">"OpsSignal</span><span class="nv"> </span><span class="s">&lt;alerts@example.com&gt;"</span>
+<span class="w">    </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">data-oncall@example.com</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">cc</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">data-platform@example.com</span><span class="p p-Indicator">]</span><span class="w">     </span><span class="c1"># optional</span>
+<span class="w">    </span><span class="nt">subject_prefix</span><span class="p">:</span><span class="w"> </span><span class="s">"[opssignal]"</span><span class="w">       </span><span class="c1"># optional</span>
+<span class="w">    </span><span class="nt">smtp</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">smtp.example.com</span>
+<span class="w">      </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">"${SMTP_USERNAME}"</span>
+<span class="w">      </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">"${SMTP_PASSWORD}"</span>
+<span class="w">      </span><span class="c1"># tls: starttls (default, port 587) | tls (port 465) | none (port 25)</span>
+<span class="w">      </span><span class="c1"># port: 2587</span>
+
+<span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">error</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">email</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Sends a plain-text email through any SMTP server, or through the
+<a href="#amazon-ses-api">Amazon SES API</a> with <code>ses</code> in place of <code>smtp</code>. The subject is
+<code>&lt;subject_prefix&gt; [SEVERITY] &lt;title&gt;</code>; the body has the message, the signal's
+fields (severity, source, event, environment, service, component, team, run
+ID, correlation and trace IDs, log URL), its metadata, and the signal ID and
+time.</p>
+<p><code>tls</code> decides how the connection is secured:</p>
+<table>
+<thead>
+<tr>
+<th><code>tls</code></th>
+<th>Default port</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>starttls</code></td>
+<td>587</td>
+<td>Plain connection upgraded with STARTTLS. If the server doesn't offer it, the send fails rather than going out unencrypted.</td>
+</tr>
+<tr>
+<td><code>tls</code></td>
+<td>465</td>
+<td>TLS from the first byte (SMTPS).</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>25</td>
+<td>No encryption. Only for a relay on localhost or inside your network.</td>
+</tr>
+</tbody>
+</table>
+<p><code>username</code> and <code>password</code> go together; leave both out for a relay that does
+not ask for authentication. Addresses are checked when the config loads, so a
+typo fails at startup instead of on the first alert.</p>
+<p>Every email for the same <code>dedup_key</code> carries the same <code>References</code> header and
+subject, so mail clients thread repeats of a failure into one conversation.</p>
+<p>Hosted email services all accept SMTP, so they need no extra package:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th><code>smtp.host</code></th>
+<th>Credentials</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Amazon SES</td>
+<td><code>email-smtp.&lt;region&gt;.amazonaws.com</code></td>
+<td>SES SMTP credentials (SES console &gt; SMTP settings)</td>
+</tr>
+<tr>
+<td>SendGrid</td>
+<td><code>smtp.sendgrid.net</code></td>
+<td>username <code>apikey</code>, password the API key</td>
+</tr>
+<tr>
+<td>Mailgun</td>
+<td><code>smtp.mailgun.org</code> (<code>smtp.eu.mailgun.org</code> in the EU)</td>
+<td>the domain's SMTP login</td>
+</tr>
+<tr>
+<td>Postmark</td>
+<td><code>smtp.postmarkapp.com</code></td>
+<td>the server API token as both username and password</td>
+</tr>
+<tr>
+<td>Gmail / Google Workspace</td>
+<td><code>smtp.gmail.com</code></td>
+<td>the account and an app password, or use the Workspace SMTP relay</td>
+</tr>
+<tr>
+<td>Microsoft 365</td>
+<td><code>smtp.office365.com</code></td>
+<td>a mailbox with SMTP AUTH enabled</td>
+</tr>
+</tbody>
+</table>
+<h3 id="amazon-ses-api">Amazon SES API<a class="headerlink" href="#amazon-ses-api" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">email</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="s">"OpsSignal</span><span class="nv"> </span><span class="s">&lt;alerts@example.com&gt;"</span>
+<span class="w">    </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">data-oncall@example.com</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">ses</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eu-west-1</span><span class="w">               </span><span class="c1"># optional; defaults to AWS_REGION</span>
+<span class="w">      </span><span class="nt">configuration_set</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alerts</span><span class="w">       </span><span class="c1"># optional</span>
+</code></pre></div>
+<p>Sends through the SES v2 <code>SendEmail</code> API with the standard AWS credential
+chain: an EKS service account (IRSA), an ECS task role, an EC2 instance profile,
+or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>. There are no SMTP credentials to
+store or rotate. The role needs <code>ses:SendEmail</code> on the sending identity, and
+<code>from</code> must be an address or domain verified in SES for that region (while the
+account is in the SES sandbox, so must every recipient). <code>AWS_ENDPOINT_URL_SESV2</code>
+overrides the endpoint, for a VPC endpoint or LocalStack.</p>
+<p>This needs AWS support: <code>pip install 'opssignal[aws]'</code> for Python, or a CLI or C
+library built with <code>--features aws</code>. Without it, the config fails to load with
+an error naming the extra, rather than failing on the first alert. Set exactly
+one of <code>smtp</code> and <code>ses</code>. The message is the same one SMTP sends, threading
+headers included.</p>
+<p>Email is a slow channel: use it for the trail and for people who are not on
+chat, and pair it with an on-call provider for anything urgent. Because
+delivery stops at the first provider that succeeds, <code>[email, slack]</code> sends to
+Slack only when the email could not be handed to the server.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
