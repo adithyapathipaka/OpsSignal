@@ -11,16 +11,49 @@ pub struct RouteMatch {
     pub source: Option<String>,
 }
 
+/// How a route delivers to the providers it lists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliveryMode {
+    /// Try the providers in order and stop at the first that succeeds,
+    /// so later providers are fallbacks.
+    #[default]
+    Failover,
+    /// Send to every provider at once. Each one is retried on its own,
+    /// so one that fails never causes a resend to one that succeeded.
+    Fanout,
+}
+
+// Unknown keys are rejected so a typo such as `mod: fanout` fails at
+// load time instead of quietly leaving the route on failover.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Route {
     #[serde(rename = "match")]
     pub match_rule: RouteMatch,
     pub providers: Vec<String>,
+    #[serde(default)]
+    pub mode: DeliveryMode,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RoutingConfig {
     pub routes: Vec<Route>,
+}
+
+/// Where one signal goes. Every target is delivered concurrently and
+/// independently; within a target the providers are tried in order
+/// until one succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryPlan {
+    pub targets: Vec<Vec<String>>,
+}
+
+impl DeliveryPlan {
+    /// Every provider of the plan, in plan order.
+    pub fn providers(&self) -> impl Iterator<Item = &String> {
+        self.targets.iter().flatten()
+    }
 }
 
 impl RouteMatch {
@@ -43,35 +76,55 @@ impl RouteMatch {
 }
 
 impl RoutingConfig {
-    /// Returns the provider names a signal should be delivered to.
+    /// Returns the provider names a signal should be delivered to, in
+    /// the order of [`RoutingConfig::plan`].
+    pub fn resolve(&self, signal: &Signal) -> Vec<String> {
+        self.plan(signal).providers().cloned().collect()
+    }
+
+    /// Groups the matching routes' providers into delivery targets.
+    ///
+    /// Each provider of a `fanout` route is a target of its own. The
+    /// providers of every matching `failover` route share one target,
+    /// placed where the first of those routes is, so a config without
+    /// `fanout` delivers exactly as it always has: one ordered list that
+    /// stops at the first success.
     ///
     /// CRITICAL INVARIANT: if no route matches, this MUST fall back to
-    /// "console" rather than returning an empty list. A signal that
+    /// "console" rather than returning an empty plan. A signal that
     /// matches nothing must never silently disappear — that is the one
     /// failure mode that destroys trust in an alerting tool. See the
     /// architecture review: "unmatched signals always hit console at
     /// minimum."
-    pub fn resolve(&self, signal: &Signal) -> Vec<String> {
-        // A provider named by several matching routes is tried once, at
-        // its first position, so a failing provider is not retried again
-        // later in the same delivery.
-        let mut matched: Vec<String> = Vec::new();
-        for name in self
-            .routes
-            .iter()
-            .filter(|r| r.match_rule.matches(signal))
-            .flat_map(|r| r.providers.iter())
-        {
-            if !matched.contains(name) {
-                matched.push(name.clone());
+    pub fn plan(&self, signal: &Signal) -> DeliveryPlan {
+        // A provider named by several matching routes is used once, at
+        // its first position, so it never gets the same signal twice and
+        // a failing provider is not retried again later in the same
+        // delivery.
+        let mut seen: Vec<&String> = Vec::new();
+        let mut targets: Vec<Vec<String>> = Vec::new();
+        let mut failover: Option<usize> = None;
+        for route in self.routes.iter().filter(|r| r.match_rule.matches(signal)) {
+            for name in &route.providers {
+                if seen.contains(&name) {
+                    continue;
+                }
+                seen.push(name);
+                match (route.mode, failover) {
+                    (DeliveryMode::Fanout, _) => targets.push(vec![name.clone()]),
+                    (DeliveryMode::Failover, Some(i)) => targets[i].push(name.clone()),
+                    (DeliveryMode::Failover, None) => {
+                        failover = Some(targets.len());
+                        targets.push(vec![name.clone()]);
+                    }
+                }
             }
         }
 
-        if matched.is_empty() {
-            vec!["console".to_string()]
-        } else {
-            matched
+        if targets.is_empty() {
+            targets.push(vec!["console".to_string()]);
         }
+        DeliveryPlan { targets }
     }
 }
 
@@ -101,6 +154,7 @@ mod tests {
                     source: None,
                 },
                 providers: vec!["slack".into()],
+                mode: DeliveryMode::Failover,
             }],
         };
         let signal = sample_signal(Severity::Info, "dev");
@@ -117,6 +171,7 @@ mod tests {
                     source: None,
                 },
                 providers: vec!["slack".into()],
+                mode: DeliveryMode::Failover,
             }],
         };
         let signal = sample_signal(Severity::Error, "prod");
@@ -136,7 +191,26 @@ mod tests {
                 source: source.map(str::to_string),
             },
             providers: providers.iter().map(|p| p.to_string()).collect(),
+            mode: DeliveryMode::Failover,
         }
+    }
+
+    fn fanout(route: Route) -> Route {
+        Route {
+            mode: DeliveryMode::Fanout,
+            ..route
+        }
+    }
+
+    fn targets(config: &RoutingConfig, signal: &Signal) -> Vec<Vec<String>> {
+        config.plan(signal).targets
+    }
+
+    fn names(targets: &[&[&str]]) -> Vec<Vec<String>> {
+        targets
+            .iter()
+            .map(|t| t.iter().map(|p| p.to_string()).collect())
+            .collect()
     }
 
     #[test]
@@ -221,5 +295,90 @@ mod tests {
             config.resolve(&sample_signal(Severity::Error, "prod")),
             vec!["slack".to_string(), "webhook".to_string()]
         );
+    }
+
+    #[test]
+    fn failover_routes_share_one_target() {
+        let config = RoutingConfig {
+            routes: vec![
+                route(&[Severity::Error], None, None, &["pagerduty", "teams"]),
+                route(&[], Some("prod"), None, &["slack"]),
+            ],
+        };
+        assert_eq!(
+            targets(&config, &sample_signal(Severity::Error, "prod")),
+            names(&[&["pagerduty", "teams", "slack"]])
+        );
+    }
+
+    #[test]
+    fn fanout_route_gives_each_provider_its_own_target() {
+        let config = RoutingConfig {
+            routes: vec![fanout(route(&[], None, None, &["slack", "pagerduty"]))],
+        };
+        assert_eq!(
+            targets(&config, &sample_signal(Severity::Error, "prod")),
+            names(&[&["slack"], &["pagerduty"]])
+        );
+    }
+
+    #[test]
+    fn mixed_modes_keep_the_failover_chain_where_its_first_route_is() {
+        let config = RoutingConfig {
+            routes: vec![
+                route(&[Severity::Error], None, None, &["teams"]),
+                fanout(route(&[], Some("prod"), None, &["slack", "pagerduty"])),
+                route(&[], None, None, &["email"]),
+            ],
+        };
+        assert_eq!(
+            targets(&config, &sample_signal(Severity::Error, "prod")),
+            names(&[&["teams", "email"], &["slack"], &["pagerduty"]])
+        );
+    }
+
+    #[test]
+    fn provider_in_both_modes_is_used_once_at_its_first_position() {
+        let config = RoutingConfig {
+            routes: vec![
+                fanout(route(&[], None, None, &["slack", "pagerduty"])),
+                route(&[], None, None, &["pagerduty", "teams"]),
+            ],
+        };
+        assert_eq!(
+            targets(&config, &sample_signal(Severity::Error, "prod")),
+            names(&[&["slack"], &["pagerduty"], &["teams"]])
+        );
+    }
+
+    #[test]
+    fn unmatched_fanout_route_still_falls_back_to_console() {
+        let config = RoutingConfig {
+            routes: vec![fanout(route(&[Severity::Critical], None, None, &["slack"]))],
+        };
+        assert_eq!(
+            targets(&config, &sample_signal(Severity::Info, "dev")),
+            names(&[&["console"]])
+        );
+    }
+
+    #[test]
+    fn mode_parses_and_defaults_to_failover() {
+        let routes: Vec<Route> = serde_yaml::from_str(
+            "- match: {}\n  providers: [slack]\n- match: {}\n  providers: [slack]\n  mode: fanout\n",
+        )
+        .expect("routes");
+        assert_eq!(routes[0].mode, DeliveryMode::Failover);
+        assert_eq!(routes[1].mode, DeliveryMode::Fanout);
+    }
+
+    #[test]
+    fn unknown_mode_or_route_key_is_rejected() {
+        let bad_mode: Result<Vec<Route>, _> =
+            serde_yaml::from_str("- match: {}\n  providers: [slack]\n  mode: broadcast\n");
+        assert!(bad_mode.is_err());
+        let typo: Result<Vec<Route>, _> =
+            serde_yaml::from_str("- match: {}\n  providers: [slack]\n  mod: fanout\n");
+        assert!(typo.is_err());
     }
 }

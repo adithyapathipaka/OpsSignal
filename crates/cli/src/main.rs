@@ -80,14 +80,22 @@ fn main() {
                 }
             };
 
-            // Exit codes: 0 delivered, 1 delivery failed, 2 bad input or config.
+            // Exit codes: 0 delivered, 1 delivery failed or only partly
+            // delivered, 2 bad input or config.
             match client.notify_sync(input, NOTIFY_TIMEOUT) {
                 Ok(result) if result.status == DeliveryStatus::Delivered => {}
                 Ok(result) => {
+                    let what = match result.status {
+                        DeliveryStatus::Partial => "signal only partly delivered",
+                        _ => "signal not delivered",
+                    };
                     eprintln!(
-                        "error: signal not delivered: {}",
+                        "error: {what}: {}",
                         result.error.unwrap_or_else(|| result.status.to_string())
                     );
+                    for outcome in &result.deliveries {
+                        eprintln!("  {}: {}", outcome.provider, outcome.status);
+                    }
                     std::process::exit(1);
                 }
                 Err(e) => {

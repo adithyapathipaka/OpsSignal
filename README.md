@@ -55,12 +55,15 @@ Configure routing in `signal.yaml` (see `python/examples/signal.example.yaml`):
 providers:
   slack:
     webhook_url: "${SLACK_WEBHOOK_URL}"
+  pagerduty:
+    routing_key: "${PAGERDUTY_ROUTING_KEY}"
 
 routes:
   - match:
       severity: [error, critical]
       environment: prod
-    providers: [slack]
+    providers: [pagerduty, slack]
+    mode: fanout   # send to both; the default, failover, stops at the first success
 ```
 
 No config? Signals fall back to the console provider — nothing is ever

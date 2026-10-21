@@ -39,7 +39,7 @@ timeout, so a CI step can fail when an alert didn't go out.
 | Code | Meaning |
 |---|---|
 | `0` | Delivered. |
-| `1` | Delivery failed or timed out. The failure is still recorded in the sink. |
+| `1` | Delivery failed or timed out, or a [`fanout`](configuration.md#delivery-modes) route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result. |
 | `2` | Bad input (blank title, unknown severity) or a config that fails to load. |
 
 Errors are printed to stderr as `error: ...`.

@@ -1,4 +1,4 @@
-use crate::delivery::DeliveryResult;
+use crate::delivery::{DeliveryResult, ProviderOutcome};
 use crate::signal::{Signal, SignalError};
 use rusqlite::Connection;
 use std::sync::Mutex;
@@ -16,9 +16,23 @@ pub trait SignalSink: Send + Sync {
     /// Stores a signal that is about to be delivered.
     fn record(&self, signal: &Signal) -> Result<(), SignalError>;
 
-    /// Stores the delivery outcome. Must also work when `record` failed
-    /// or never ran for this signal, so the outcome is never lost.
+    /// Stores the delivery outcome, including `result.deliveries`. Must
+    /// also work when `record` failed or never ran for this signal, so
+    /// the outcome is never lost.
     fn complete(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
+
+    /// Stores one provider's outcome while delivery is still running:
+    /// `pending` before its first attempt, then `delivered` or `failed`.
+    /// A fan-out cut short by a timeout or an exit then still shows
+    /// which providers already have the signal. Sinks that only keep
+    /// the overall outcome can leave this as is.
+    fn provider_outcome(
+        &self,
+        _signal: &Signal,
+        _outcome: &ProviderOutcome,
+    ) -> Result<(), SignalError> {
+        Ok(())
+    }
 }
 
 /// Zero-config default sink. Always available, no setup required, so
@@ -53,6 +67,21 @@ impl SqliteSink {
             [],
         )
         .map_err(|e| SignalError::Sink(e.to_string()))?;
+        // One row per (signal, provider). Added in beta.2; an older
+        // database gets the table on its next open.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS deliveries (
+                signal_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                attempts INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (signal_id, provider)
+            )",
+            [],
+        )
+        .map_err(|e| SignalError::Sink(e.to_string()))?;
         Ok(SqliteSink {
             conn: Mutex::new(conn),
         })
@@ -66,10 +95,7 @@ impl SqliteSink {
         result: &DeliveryResult,
         on_conflict: &str,
     ) -> Result<(), SignalError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| SignalError::Sink("sqlite connection mutex poisoned".to_string()))?;
+        let conn = self.lock()?;
         let payload =
             serde_json::to_string(signal).map_err(|e| SignalError::Sink(e.to_string()))?;
         conn.execute(
@@ -95,6 +121,35 @@ impl SqliteSink {
         .map_err(|e| SignalError::Sink(e.to_string()))?;
         Ok(())
     }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, SignalError> {
+        self.conn
+            .lock()
+            .map_err(|_| SignalError::Sink("sqlite connection mutex poisoned".to_string()))
+    }
+}
+
+fn upsert_outcome(
+    conn: &Connection,
+    signal: &Signal,
+    outcome: &ProviderOutcome,
+) -> Result<(), SignalError> {
+    conn.execute(
+        "INSERT INTO deliveries (signal_id, provider, status, error, attempts, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(signal_id, provider) DO UPDATE SET status = excluded.status, \
+         error = excluded.error, attempts = excluded.attempts, updated_at = excluded.updated_at",
+        rusqlite::params![
+            signal.id.to_string(),
+            outcome.provider,
+            outcome.status.to_string(),
+            outcome.error,
+            outcome.attempts,
+            chrono::Utc::now().to_rfc3339(),
+        ],
+    )
+    .map_err(|e| SignalError::Sink(e.to_string()))?;
+    Ok(())
 }
 
 impl SignalSink for SqliteSink {
@@ -108,7 +163,20 @@ impl SignalSink for SqliteSink {
             result,
             "ON CONFLICT(id) DO UPDATE SET delivery_status = excluded.delivery_status, \
              provider = excluded.provider, error = excluded.error",
-        )
+        )?;
+        let conn = self.lock()?;
+        for outcome in &result.deliveries {
+            upsert_outcome(&conn, signal, outcome)?;
+        }
+        Ok(())
+    }
+
+    fn provider_outcome(
+        &self,
+        signal: &Signal,
+        outcome: &ProviderOutcome,
+    ) -> Result<(), SignalError> {
+        upsert_outcome(&*self.lock()?, signal, outcome)
     }
 }
 
@@ -147,6 +215,7 @@ mod tests {
             provider: None,
             error: Some("slack webhook returned status 500".into()),
             attempts: 3,
+            deliveries: vec![],
         }
     }
 
@@ -213,6 +282,7 @@ mod tests {
             provider: Some("slack".into()),
             error: None,
             attempts: 1,
+            deliveries: vec![],
         };
         sink.complete(&signal, &delivered).expect("complete");
 
@@ -265,5 +335,98 @@ mod tests {
             .err()
             .expect("missing parent directory must fail");
         assert!(matches!(err, SignalError::Sink(_)));
+    }
+
+    fn outcome(provider: &str, status: DeliveryStatus, attempts: u32) -> ProviderOutcome {
+        ProviderOutcome {
+            provider: provider.into(),
+            status,
+            error: (status == DeliveryStatus::Failed).then(|| format!("{provider} is down")),
+            attempts,
+        }
+    }
+
+    fn delivery_rows(db: &str) -> Vec<(String, String, Option<String>, u32)> {
+        let conn = Connection::open(db).expect("reopen");
+        let mut stmt = conn
+            .prepare("SELECT provider, status, error, attempts FROM deliveries ORDER BY provider")
+            .expect("prepare");
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect()
+    }
+
+    #[test]
+    fn provider_outcomes_move_from_pending_to_their_result() {
+        let db = temp_db();
+        let sink = SqliteSink::open(&db).expect("open");
+        let signal = signal();
+        sink.record(&signal).expect("record");
+        for p in ["pagerduty", "slack"] {
+            sink.provider_outcome(&signal, &outcome(p, DeliveryStatus::Pending, 0))
+                .expect("pending");
+        }
+        assert_eq!(
+            delivery_rows(&db),
+            vec![
+                ("pagerduty".into(), "pending".into(), None, 0),
+                ("slack".into(), "pending".into(), None, 0),
+            ]
+        );
+
+        sink.provider_outcome(&signal, &outcome("slack", DeliveryStatus::Delivered, 1))
+            .expect("slack done");
+        sink.complete(
+            &signal,
+            &DeliveryResult {
+                status: DeliveryStatus::Partial,
+                provider: Some("slack".into()),
+                error: Some("pagerduty: pagerduty is down".into()),
+                attempts: 3,
+                deliveries: vec![
+                    outcome("slack", DeliveryStatus::Delivered, 1),
+                    outcome("pagerduty", DeliveryStatus::Failed, 3),
+                ],
+            },
+        )
+        .expect("complete");
+
+        assert_eq!(
+            delivery_rows(&db),
+            vec![
+                (
+                    "pagerduty".into(),
+                    "failed".into(),
+                    Some("pagerduty is down".into()),
+                    3
+                ),
+                ("slack".into(), "delivered".into(), None, 1),
+            ]
+        );
+        let row = columns(&db);
+        assert_eq!(row[7].as_deref(), Some("partial"));
+        assert_eq!(row[8].as_deref(), Some("slack"));
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn opening_a_database_from_before_deliveries_adds_the_table() {
+        let db = temp_db();
+        Connection::open(&db)
+            .expect("create")
+            .execute_batch(
+                "CREATE TABLE signals (id TEXT PRIMARY KEY, source TEXT NOT NULL, \
+                 event_type TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, \
+                 environment TEXT, dedup_key TEXT, delivery_status TEXT NOT NULL, \
+                 provider TEXT, error TEXT, payload_json TEXT NOT NULL, timestamp TEXT NOT NULL);",
+            )
+            .expect("old schema");
+        let sink = SqliteSink::open(&db).expect("open old database");
+        let signal = signal();
+        sink.provider_outcome(&signal, &outcome("slack", DeliveryStatus::Delivered, 1))
+            .expect("write to the new table");
+        assert_eq!(delivery_rows(&db).len(), 1);
+        let _ = std::fs::remove_file(&db);
     }
 }

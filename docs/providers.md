@@ -19,11 +19,14 @@ All providers are in the base package. The one exception is email through
 the [Amazon SES API](#amazon-ses-api), which needs `opssignal[aws]`; email over
 SMTP, SES's SMTP endpoint included, needs no extra.
 
-A route's providers are tried in order and delivery **stops at the first one
-that succeeds**, so later providers are fallbacks, not extra copies. A route
-`providers: [pagerduty, teams]` pages through PagerDuty and posts to Teams only
-if PagerDuty could not be reached. Any non-2xx response or connection error is
-a failed attempt; each provider gets up to 3 attempts with backoff.
+By default a route's providers are tried in order and delivery **stops at the
+first one that succeeds**, so later providers are fallbacks, not extra copies.
+A route `providers: [pagerduty, teams]` pages through PagerDuty and posts to
+Teams only if PagerDuty could not be reached. Add `mode: fanout` to send to
+every provider of the route at once instead; see
+[delivery modes](configuration.md#delivery-modes). Any non-2xx response or
+connection error is a failed attempt; each provider gets up to 3 attempts with
+backoff.
 
 ## Console
 
@@ -250,6 +253,6 @@ one of `smtp` and `ses`. The message is the same one SMTP sends, threading
 headers included.
 
 Email is a slow channel: use it for the trail and for people who are not on
-chat, and pair it with an on-call provider for anything urgent. Because
-delivery stops at the first provider that succeeds, `[email, slack]` sends to
-Slack only when the email could not be handed to the server.
+chat, and pair it with an on-call provider for anything urgent. On a `failover` route,
+`[email, slack]` sends to Slack only when the email could not be handed to the
+server; use `mode: fanout` to send both.
