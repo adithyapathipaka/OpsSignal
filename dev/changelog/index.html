@@ -587,6 +587,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -753,6 +764,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -845,6 +867,14 @@ the next tag.</p>
   without sending or recording it, and <code>opssignal notify</code>/<code>preview</code> take
   <code>--metadata</code> as a JSON object
   (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/32">#32</a>).</li>
+<li><strong>Dedup and rate limits per route:</strong> <code>dedup: 30m</code> sends each incident (dedup
+  key) at most once per window, and <code>rate_limit: {max: 10, per: 1h}</code> caps how
+  many signals a route sends. Held-back signals are stored with status
+  <code>skipped</code>. The history lives in the SQLite file, so it holds across
+  processes on one host (cron, Airflow tasks, the CLI) and across restarts.
+  A failed send never suppresses the next one. The CLI exits 0 for a
+  suppressed signal and prints the reason
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/31">#31</a>).</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -856,6 +886,12 @@ the next tag.</p>
   classifiers (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/25">#25</a>).
   PyPI fixes a version's metadata at its first upload, so this shows from
   the next release; the <code>1.0.0b1</code> pages stay without a description.</li>
+</ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>An unknown key inside a route's <code>match</code> (such as <code>enviroment: prod</code>) is now
+  a load-time error. It used to be ignored, so the route matched every signal
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/31">#31</a>).</li>
 </ul>
 <h2 id="100-beta1-2026-10-20"><a href="https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1">1.0.0-beta.1</a> - 2026-10-20<a class="headerlink" href="#100-beta1-2026-10-20" title="Permanent link">&para;</a></h2>
 <p>First public build, published to PyPI (<code>pip install --pre opssignal</code>) and

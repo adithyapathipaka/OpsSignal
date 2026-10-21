@@ -525,6 +525,34 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#dedup-and-rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup and rate limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dedup and rate limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dedup-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -955,6 +983,34 @@
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dedup-and-rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup and rate limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dedup and rate limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dedup-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -1584,10 +1640,93 @@ succeeded, <code>failed</code> when none did, and <code>partial</code> when some
 each provider's result too; see <a href="#storage"><code>storage</code></a>.</p>
 <p>If no route matches, the list is just <code>console</code>. That fallback is built into
 the routing engine and cannot be configured away.</p>
+<h3 id="dedup-and-rate-limits">Dedup and rate limits<a class="headerlink" href="#dedup-and-rate-limits" title="Permanent link">&para;</a></h3>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Routes can set <code>dedup</code> and <code>rate_limit</code>.</p>
+</div>
+<p>A failing job that retries every minute, or one bad deploy that breaks 200
+DAGs, should page once, not hundreds of times. Two optional route fields hold
+back the repeats:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dedup</code></td>
+<td>a window: <code>30s</code>, <code>10m</code>, <code>2h</code>, <code>1d</code> (a bare number is seconds)</td>
+<td>The route sends each <a href="#dedup-keys">dedup key</a> at most once per window. Repeats inside the window are suppressed.</td>
+</tr>
+<tr>
+<td><code>rate_limit</code></td>
+<td><code>{max: N, per: &lt;window&gt;}</code></td>
+<td>The route sends at most <code>N</code> signals in any sliding <code>per</code> window, whatever their key. Signals over the limit are suppressed.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># One page per incident every 30 minutes, and never more than 10 pages</span>
+<span class="w">  </span><span class="c1"># an hour even if every DAG fails at once.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fanout</span>
+<span class="w">    </span><span class="nt">dedup</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30m</span>
+<span class="w">    </span><span class="nt">rate_limit</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+<span class="w">      </span><span class="nt">per</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1h</span>
+<span class="w">  </span><span class="c1"># The channel still gets every warning, unthrottled.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">warning</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">error</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>How they behave:</p>
+<ul>
+<li><strong>Per route.</strong> A suppressed route adds none of its providers for that
+  signal; other matching routes still send. To page once but keep every
+  occurrence in a channel, give the paging route a <code>dedup</code> and add an
+  unthrottled route for the channel.</li>
+<li><strong>The window starts at the last send</strong>, not the last repeat, so a
+  long-running incident re-alerts once per <code>dedup</code> window as a reminder.</li>
+<li><strong>Only sends count.</strong> A suppressed signal does not use up the <code>rate_limit</code>,
+  and a signal that no provider delivered (status <code>failed</code>) is taken back, so
+  the next occurrence is tried again instead of being suppressed as a
+  duplicate of an alert nobody received.</li>
+<li><strong>Suppressed signals are still recorded</strong> in the sink with status
+  <code>skipped</code> and the reason in <code>error</code>, for example
+  <code>route [pagerduty, slack]: duplicate of a signal sent 4m ago (dedup 30m)</code>.
+  If a signal was suppressed on one route and delivered on another, its
+  status is the delivered one.</li>
+<li><strong>Shared by every process on the host</strong> that uses the same
+  <a href="#storage"><code>storage.path</code></a>: the history is kept in that SQLite file, so a
+  CLI run from cron, each Airflow task process and a restarted service all
+  see the same windows. Hosts do not share it with each other.</li>
+<li><strong>Editing a route</strong> (its match, providers, mode or limits) starts its
+  history afresh.</li>
+<li>If the history can't be read (for example the file is locked by another
+  process for more than 2 seconds), the signal is sent. Throttling never
+  costs you an alert.</li>
+</ul>
+<p>A signal no route matches still goes to <code>console</code>; that fallback is never
+suppressed.</p>
+<h4 id="dedup-keys">Dedup keys<a class="headerlink" href="#dedup-keys" title="Permanent link">&para;</a></h4>
+<p>Each signal's dedup key is the one the caller passed (<code>dedup_key=</code> in Python,
+<code>dedup_key</code> in the C JSON payload), or else a hash of its <code>source</code>,
+<code>event_type</code>, <code>title</code> and <code>environment</code>. Severity and message are not part of
+it, so a retry with a new error message is still the same incident. Pass your
+own key, such as the DAG and task id, when the title changes between retries.</p>
 <p>A route that names a provider not configured under <code>providers</code> is a load-time
-error, as is a route with an empty <code>providers</code> list, an unknown <code>mode</code>, or an
-unknown key (so a typo such as <code>mod: fanout</code> fails at load time instead of
-leaving the route on failover).</p>
+error, as is a route with an empty <code>providers</code> list, an unknown <code>mode</code>, a
+<code>dedup</code> or <code>rate_limit</code> of zero, or an unknown key (so a typo such as
+<code>mod: fanout</code> fails at load time instead of leaving the route on failover).
+Unknown keys inside <code>match</code> are rejected too, so a typo such as
+<code>enviroment: prod</code> fails at load time instead of matching every signal.</p>
 <h2 id="storage"><code>storage</code><a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1619,6 +1758,10 @@ and <code>provider</code>, the comma-separated providers that delivered it.
 of a fan-out therefore still shows which providers already have the signal.
 Databases created by earlier versions get the <code>deliveries</code> table the next time
 they are opened.</p>
+<p>A third table, <code>throttle</code>, holds the recent sends of routes that set
+<a href="#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a>. Rows older than a route's
+windows are deleted as it sends. Signals those settings held back are stored
+in <code>signals</code> with status <code>skipped</code>.</p>
 <p>Every signal is written to the sink with its delivery status (<code>delivered</code> or
 <code>failed</code>), the provider that delivered it, and any error.</p>
 <h2 id="environment-variables-in-values">Environment variables in values<a class="headerlink" href="#environment-variables-in-values" title="Permanent link">&para;</a></h2>
