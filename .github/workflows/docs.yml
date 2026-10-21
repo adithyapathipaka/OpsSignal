@@ -6,6 +6,8 @@ name: Docs
 #   - every release tag vX.Y.Z[-beta.N] adds "X.Y.Z[-beta.N]" and, when it is
 #     the highest tag, moves the "latest" alias (the site's default) to it
 #   - Run workflow with a tag backfills that tag's docs
+# "latest" is written as a real copy of that version, not mike's default
+# symlink, because GitHub Pages doesn't serve symlinked folders.
 # Each version carries its own Rust API reference under rust/.
 # PRs build only when the site itself changed; rustdoc is checked by the
 # merge build.
@@ -116,7 +118,7 @@ jobs:
           else
             newest=$(git -c versionsort.suffix=- tag -l 'v*' --sort=-v:refname | head -n1)
             if [ "$TAG" = "$newest" ]; then
-              $MKDOCS mike deploy --push --update-aliases "$VERSION" latest
+              $MKDOCS mike deploy --push --update-aliases --alias-type=copy "$VERSION" latest
               $MKDOCS mike set-default --push latest
             else
               $MKDOCS mike deploy --push "$VERSION"
