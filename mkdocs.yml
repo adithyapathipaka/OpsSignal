@@ -35,6 +35,7 @@ nav:
   - Getting started: getting-started.md
   - Configuration: configuration.md
   - Providers: providers.md
+  - Message templates: templates.md
   - Kubernetes: kubernetes.md
   - CLI: cli.md
   - Architecture: ARCHITECTURE.md

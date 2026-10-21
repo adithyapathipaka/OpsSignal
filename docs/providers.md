@@ -15,6 +15,11 @@ the file with `${VAR}` or a secret reference such as `${aws-sm:prod/opssignal#pd
 | [Opsgenie](#opsgenie) | `opsgenie` | `api_key` | `url`, `tags` |
 | [Email](#email) | `email` | `from`, `to`, and `smtp.host` or `ses` | `cc`, `subject_prefix`, `smtp.port`, `smtp.username`, `smtp.password`, `smtp.tls`, `ses.region`, `ses.configuration_set` |
 
+!!! info "Added in v1.0.0-beta.2"
+    Every provider also takes an optional `template` block that replaces
+    parts of its message with your own text. See
+    [Message templates](templates.md).
+
 All providers are in the base package. The one exception is email through
 the [Amazon SES API](#amazon-ses-api), which needs `opssignal[aws]`; email over
 SMTP, SES's SMTP endpoint included, needs no extra.

@@ -244,3 +244,55 @@ fn unsupported_config_url_exits_two() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("unsupported scheme"));
 }
+
+fn preview_args<'a>(config: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+    let mut args = notify_args(config, extra);
+    args[2] = "preview";
+    args
+}
+
+#[test]
+fn preview_prints_templated_payloads_without_sending() {
+    let dir = TempDir::new();
+    // Nothing listens on the webhook: preview must not try to send.
+    let url = format!("http://127.0.0.1:{}/hook", closed_port());
+    let config = dir.config(&format!(
+        "providers:\n  slack:\n    webhook_url: \"{url}\"\n    template:\n      text: \"{{{{ emoji }}}} {{{{ title }}}} ({{{{ metadata.run }}}})\"\nroutes:\n  - match: {{ source: ci }}\n    providers: [slack]\n"
+    ));
+    let out = run(
+        &preview_args(
+            config.to_str().expect("utf8"),
+            &["--severity", "error", "--metadata", r#"{"run": "42"}"#],
+        ),
+        &dir,
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let previews: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(previews[0]["provider"], "slack");
+    assert_eq!(previews[0]["payload"]["text"], ":x: main is red (42)");
+    assert!(
+        !dir.0.join("signals.db").exists(),
+        "preview records nothing"
+    );
+}
+
+#[test]
+fn preview_of_an_unconfigured_provider_exits_two() {
+    let dir = TempDir::new();
+    let config = dir.config("");
+    let out = run(
+        &preview_args(config.to_str().expect("utf8"), &["--provider", "slack"]),
+        &dir,
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not configured"));
+}
+
+#[test]
+fn template_typo_is_a_config_error() {
+    let dir = TempDir::new();
+    let config = dir.config("providers:\n  console:\n    template:\n      text: \"{{ tilte }}\"\n");
+    let out = run(&notify_args(config.to_str().expect("utf8"), &[]), &dir);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown variable tilte"));
+}

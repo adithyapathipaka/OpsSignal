@@ -1,5 +1,6 @@
 use crate::delivery::Provider;
 use crate::signal::{Severity, Signal, SignalError};
+use crate::template::{self, Templates};
 
 /// Alert API endpoint for US-hosted accounts. EU accounts use
 /// `https://api.eu.opsgenie.com/v2/alerts`, set through `url`.
@@ -23,6 +24,7 @@ pub struct OpsgenieProvider {
     pub url: String,
     tags: Vec<String>,
     client: reqwest::Client,
+    templates: Option<Templates>,
 }
 
 impl OpsgenieProvider {
@@ -32,7 +34,14 @@ impl OpsgenieProvider {
             url: url.unwrap_or_else(|| DEFAULT_ALERTS_URL.to_string()),
             tags,
             client: reqwest::Client::new(),
+            templates: None,
         }
+    }
+
+    /// Uses `templates` for the parts they set; see [`crate::template`].
+    pub fn with_templates(mut self, templates: Option<Templates>) -> Self {
+        self.templates = templates;
+        self
     }
 
     /// Opsgenie priorities run from P1 (critical) to P5
@@ -93,8 +102,10 @@ impl OpsgenieProvider {
             .take(MAX_TAGS)
             .collect();
 
+        let message = template::render(&self.templates, "message", signal, &[])
+            .unwrap_or_else(|| signal.title.clone());
         let mut alert = serde_json::json!({
-            "message": truncate(&signal.title, MAX_MESSAGE_CHARS),
+            "message": truncate(&message, MAX_MESSAGE_CHARS),
             "source": truncate(&signal.source, MAX_SOURCE_CHARS),
             "priority": Self::priority_for(signal.severity),
             "tags": tags,
@@ -103,14 +114,18 @@ impl OpsgenieProvider {
         if let Some(key) = &signal.dedup_key {
             alert["alias"] = truncate(key, MAX_ALIAS_CHARS).into();
         }
-        let mut description = signal.message.clone().unwrap_or_default();
-        if let Some(log_url) = &signal.log_url {
-            if !description.is_empty() {
-                description.push_str("\n\n");
-            }
-            description.push_str("Logs: ");
-            description.push_str(log_url);
-        }
+        let description = template::render(&self.templates, "description", signal, &[])
+            .unwrap_or_else(|| {
+                let mut description = signal.message.clone().unwrap_or_default();
+                if let Some(log_url) = &signal.log_url {
+                    if !description.is_empty() {
+                        description.push_str("\n\n");
+                    }
+                    description.push_str("Logs: ");
+                    description.push_str(log_url);
+                }
+                description
+            });
         if !description.is_empty() {
             alert["description"] = truncate(&description, MAX_DESCRIPTION_CHARS).into();
         }
@@ -137,6 +152,10 @@ fn truncate(s: &str, max_chars: usize) -> String {
 impl Provider for OpsgenieProvider {
     fn name(&self) -> &'static str {
         "opsgenie"
+    }
+
+    fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
+        Some(self.alert_for(signal))
     }
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
@@ -313,5 +332,23 @@ mod tests {
         assert!(err.to_string().contains("401"));
         // The key must never end up in an error that gets logged.
         assert!(!err.to_string().contains("bad"));
+    }
+
+    #[test]
+    fn message_and_description_templates_replace_the_defaults() {
+        let provider =
+            OpsgenieProvider::new("k".into(), None, vec![]).with_templates(template::for_test(
+                "opsgenie",
+                &[
+                    ("message", "{{ service }}: {{ title }}"),
+                    (
+                        "description",
+                        "DAG {{ metadata.dag }}, try {{ metadata.try }}",
+                    ),
+                ],
+            ));
+        let alert = provider.alert_for(&signal(Severity::Error));
+        assert_eq!(alert["message"], "orders: dbt model failed");
+        assert_eq!(alert["description"], "DAG daily, try 2");
     }
 }
