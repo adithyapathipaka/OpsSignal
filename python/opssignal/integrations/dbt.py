@@ -37,7 +37,9 @@ Both emit one signal per failed node (`error`) or warned test
 
 and pass `--max-signals 0` (or `max_signals=0`), since the digest already
 keeps a large run to one message. The digest goes out when `group_wait`
-runs out or the process exits, whichever comes first. Skipped nodes are not reported: they are skipped because an
+runs out or the process exits, whichever comes first.
+
+Skipped nodes are not reported: they are skipped because an
 upstream node failed, and that node already has its own signal. Like the
 Airflow adapter, nothing here ever raises into dbt or the caller's run,
 and notify() is fire-and-forget.
