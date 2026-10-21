@@ -884,11 +884,14 @@ the file with <code>${VAR}</code> or a secret reference such as <code>${aws-sm:p
 <p>All providers are in the base package. The one exception is email through
 the <a href="#amazon-ses-api">Amazon SES API</a>, which needs <code>opssignal[aws]</code>; email over
 SMTP, SES's SMTP endpoint included, needs no extra.</p>
-<p>A route's providers are tried in order and delivery <strong>stops at the first one
-that succeeds</strong>, so later providers are fallbacks, not extra copies. A route
-<code>providers: [pagerduty, teams]</code> pages through PagerDuty and posts to Teams only
-if PagerDuty could not be reached. Any non-2xx response or connection error is
-a failed attempt; each provider gets up to 3 attempts with backoff.</p>
+<p>By default a route's providers are tried in order and delivery <strong>stops at the
+first one that succeeds</strong>, so later providers are fallbacks, not extra copies.
+A route <code>providers: [pagerduty, teams]</code> pages through PagerDuty and posts to
+Teams only if PagerDuty could not be reached. Add <code>mode: fanout</code> to send to
+every provider of the route at once instead; see
+<a href="../configuration/#delivery-modes">delivery modes</a>. Any non-2xx response or
+connection error is a failed attempt; each provider gets up to 3 attempts with
+backoff.</p>
 <h2 id="console">Console<a class="headerlink" href="#console" title="Permanent link">&para;</a></h2>
 <p>Prints one line per signal to stdout. It is always registered, because
 unmatched signals fall back to it, and cannot be turned off.</p>
@@ -1194,9 +1197,9 @@ an error naming the extra, rather than failing on the first alert. Set exactly
 one of <code>smtp</code> and <code>ses</code>. The message is the same one SMTP sends, threading
 headers included.</p>
 <p>Email is a slow channel: use it for the trail and for people who are not on
-chat, and pair it with an on-call provider for anything urgent. Because
-delivery stops at the first provider that succeeds, <code>[email, slack]</code> sends to
-Slack only when the email could not be handed to the server.</p>
+chat, and pair it with an on-call provider for anything urgent. On a <code>failover</code> route,
+<code>[email, slack]</code> sends to Slack only when the email could not be handed to the
+server; use <code>mode: fanout</code> to send both.</p>
 
 
 

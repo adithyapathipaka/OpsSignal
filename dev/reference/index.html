@@ -619,7 +619,11 @@ with this site:</p>
 </tr>
 <tr>
 <td><code>SignalClient::notify_sync(SignalInput, Duration)</code></td>
-<td>Blocking delivery with a timeout. Returns a <code>DeliveryResult</code>.</td>
+<td>Blocking delivery with a timeout. Returns a <code>DeliveryResult</code>, whose <code>deliveries</code> lists each provider's outcome.</td>
+</tr>
+<tr>
+<td><code>routing::DeliveryMode</code></td>
+<td>A route's <code>mode</code>: <code>Failover</code> (default) or <code>Fanout</code>.</td>
 </tr>
 <tr>
 <td><code>config::Config::{discover, from_file, from_yaml_str}</code></td>

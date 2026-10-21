@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Route","RouteMatch","RoutingConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["DeliveryMode"],"struct":["DeliveryPlan","Route","RouteMatch","RoutingConfig"]};

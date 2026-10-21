@@ -511,6 +511,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -899,6 +916,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1345,9 +1379,11 @@ than once, such as a default that every team extends, is loaded once.</p>
 </tr>
 </tbody>
 </table>
-<p>Because delivery stops at the first provider that succeeds (see
-<a href="#routes"><code>routes</code></a>), a team route that matches a signal effectively decides
-where it goes, and the inherited providers become its fallbacks. Routes are
+<p>Because a <code>failover</code> route stops at the first provider that succeeds (see
+<a href="#delivery-modes">delivery modes</a>), a team route that matches a signal
+effectively decides where it goes, and the inherited failover providers become
+its fallbacks. An inherited <code>fanout</code> route still delivers to all of its
+providers. Routes are
 checked after merging, so a team file can route to a provider that only its
 parent configures. A route naming an unknown provider is reported with the
 file it is in, such as <code>teams/payments.yaml: routes[0] references provider
@@ -1462,15 +1498,64 @@ time instead of silently dropping a provider.</p>
 </tr>
 </tbody>
 </table>
-<p>The matching routes' providers form an ordered list (in file order, with
-consecutive duplicates removed). Delivery tries them in that order and
-<strong>stops at the first one that succeeds</strong>. Each provider gets up to 3
-attempts with exponential backoff before the next one is tried. Later
-providers are therefore fallbacks, not extra copies.</p>
+<p>A route can also set <code>mode</code>, which decides what its list of providers means:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Values</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mode</code></td>
+<td><code>failover</code>, <code>fanout</code></td>
+<td><code>failover</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="delivery-modes">Delivery modes<a class="headerlink" href="#delivery-modes" title="Permanent link">&para;</a></h3>
+<p><strong><code>failover</code></strong> (the default): the providers are tried in order and delivery
+<strong>stops at the first one that succeeds</strong>. Each provider gets up to 3 attempts
+with exponential backoff before the next one is tried. Later providers are
+fallbacks, not extra copies.</p>
+<p><strong><code>fanout</code></strong>: the signal goes to <strong>every</strong> provider in the list at the same
+time. Each provider is retried on its own (up to 3 attempts), so a failing
+PagerDuty never causes a second Slack message, and a slow provider never
+holds up the others.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Page on-call and tell the channel, every time.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fanout</span>
+<span class="w">  </span><span class="c1"># Everything else: Teams, or email if Teams is down.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">teams</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">email</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>When several routes match one signal:</p>
+<ul>
+<li>each provider of a matching <code>fanout</code> route is delivered to on its own;</li>
+<li>the providers of all matching <code>failover</code> routes form one ordered list (in
+  file order), which is delivered to alongside the fan-out providers and stops
+  at its first success, exactly as before <code>fanout</code> existed;</li>
+<li>a provider named by more than one matching route is used once, at its
+  first position, so it never receives the same signal twice.</li>
+</ul>
+<p>In the example above, a critical prod signal goes to PagerDuty, Slack, and
+Teams (falling back to email); any other signal goes to Teams, falling back to
+email.</p>
+<p>The outcome is <code>delivered</code> when every fan-out provider and the failover list
+succeeded, <code>failed</code> when none did, and <code>partial</code> when some did. The sink keeps
+each provider's result too; see <a href="#storage"><code>storage</code></a>.</p>
 <p>If no route matches, the list is just <code>console</code>. That fallback is built into
 the routing engine and cannot be configured away.</p>
 <p>A route that names a provider not configured under <code>providers</code> is a load-time
-error, as is a route with an empty <code>providers</code> list.</p>
+error, as is a route with an empty <code>providers</code> list, an unknown <code>mode</code>, or an
+unknown key (so a typo such as <code>mod: fanout</code> fails at load time instead of
+leaving the route on failover).</p>
 <h2 id="storage"><code>storage</code><a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1493,6 +1578,15 @@ error, as is a route with an empty <code>providers</code> list.</p>
 </tr>
 </tbody>
 </table>
+<p>The SQLite file has two tables. <code>signals</code> holds one row per signal, with its
+overall <code>delivery_status</code> (<code>pending</code>, then <code>delivered</code>, <code>partial</code> or <code>failed</code>)
+and <code>provider</code>, the comma-separated providers that delivered it.
+<code>deliveries</code> holds one row per signal and provider, keyed by <code>signal_id</code> and
+<code>provider</code>: <code>pending</code> before the provider's first attempt, then <code>delivered</code> or
+<code>failed</code>, with its <code>error</code> and <code>attempts</code>. A process that exits in the middle
+of a fan-out therefore still shows which providers already have the signal.
+Databases created by earlier versions get the <code>deliveries</code> table the next time
+they are opened.</p>
 <p>Every signal is written to the sink with its delivery status (<code>delivered</code> or
 <code>failed</code>), the provider that delivered it, and any error.</p>
 <h2 id="environment-variables-in-values">Environment variables in values<a class="headerlink" href="#environment-variables-in-values" title="Permanent link">&para;</a></h2>

@@ -945,15 +945,27 @@ invocation.</p>
     Client-&gt;&gt;Client: validate, assign id + timestamp + dedup key
     Client-&gt;&gt;Sink: record(signal), status pending
     Client--&gt;&gt;App: returns
-    Client-&gt;&gt;Router: resolve(signal)
-    Router--&gt;&gt;Client: provider names (never empty, console fallback)
-    loop each provider until one succeeds
-        Client-&gt;&gt;Provider: send(signal), up to 3 attempts with backoff
-        Provider--&gt;&gt;Client: Ok / Err
+    Client-&gt;&gt;Router: plan(signal)
+    Router--&gt;&gt;Client: delivery targets (never empty, console fallback)
+    par each target, concurrently
+        loop each provider of the target until one succeeds
+            Client-&gt;&gt;Sink: provider_outcome(pending)
+            Client-&gt;&gt;Provider: send(signal), up to 3 attempts with backoff
+            Provider--&gt;&gt;Client: Ok / Err
+            Client-&gt;&gt;Sink: provider_outcome(delivered / failed)
+        end
     end
     Client-&gt;&gt;Sink: complete(signal, delivery result)</code></pre>
 <p><code>notify_sync</code> runs the same steps but blocks the caller until the result is
 known or the timeout expires.</p>
+<p>A delivery plan is a list of targets, each an ordered list of providers. A
+<code>failover</code> route's providers join the one shared failover target; each
+provider of a <code>fanout</code> route is a target of its own. Targets run concurrently
+and never share retries, so a provider that delivered is never sent the
+signal again because another provider failed. The overall status is
+<code>delivered</code> (every target succeeded), <code>partial</code> (some did) or <code>failed</code>. A
+config without <code>fanout</code> has a single target and behaves exactly as it did
+before delivery modes existed.</p>
 <p><code>notify_async</code> callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
 would cut them off. <code>SignalClient::flush(timeout)</code> waits for them, and every
@@ -1006,6 +1018,9 @@ still lands if the sink has recovered.</p>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="w">    </span><span class="sd">/// After delivery: store the outcome (an upsert; must work without `record`).</span>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">complete</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">DeliveryResult</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// During delivery: one provider's outcome, pending then delivered/failed.</span>
+<span class="w">    </span><span class="sd">/// Optional; defaults to doing nothing.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">provider_outcome</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">,</span><span class="w"> </span><span class="n">outcome</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ProviderOutcome</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>A sink is a <strong>write-only side effect</strong>, not a queryable API. This SDK does

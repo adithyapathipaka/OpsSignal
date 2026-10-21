@@ -786,7 +786,7 @@ timeout, so a CI step can fail when an alert didn't go out.</p>
 </tr>
 <tr>
 <td><code>1</code></td>
-<td>Delivery failed or timed out. The failure is still recorded in the sink.</td>
+<td>Delivery failed or timed out, or a <a href="../configuration/#delivery-modes"><code>fanout</code></a> route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result.</td>
 </tr>
 <tr>
 <td><code>2</code></td>
