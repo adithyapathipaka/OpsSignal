@@ -386,6 +386,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -488,6 +515,17 @@
     <span class="md-ellipsis">
       
         opssignal notify
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opssignal-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal preview
       
     </span>
   </a>
@@ -670,6 +708,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -762,6 +811,12 @@ uses the same Rust core, config and routing as the Python package.</p>
 <td>Used by routes that match on <code>environment</code>.</td>
 </tr>
 <tr>
+<td><code>--metadata</code></td>
+<td>no</td>
+<td></td>
+<td>A JSON object, such as <code>'{"dag_id": "orders"}'</code>, for <a href="../templates/">templates</a> to use. Added in v1.0.0-beta.2.</td>
+</tr>
+<tr>
 <td><code>--config</code></td>
 <td>no</td>
 <td></td>
@@ -771,6 +826,26 @@ uses the same Rust core, config and routing as the Python package.</p>
 </table>
 <p>Unlike the Python <code>notify()</code>, the CLI waits for delivery, with a 5 second
 timeout, so a CI step can fail when an alert didn't go out.</p>
+<h2 id="opssignal-preview"><code>opssignal preview</code><a class="headerlink" href="#opssignal-preview" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Prints what each provider would be sent, for checking
+<a href="../templates/">message templates</a>.</p>
+</div>
+<div class="highlight"><pre><span></span><code>opssignal<span class="w"> </span>preview<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--source<span class="w"> </span>airflow<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--event-type<span class="w"> </span>task_failed<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--severity<span class="w"> </span>error<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--title<span class="w"> </span><span class="s2">"load failed"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--metadata<span class="w"> </span><span class="s1">'{"dag_id": "orders"}'</span>
+</code></pre></div>
+<p>Takes the same flags as <code>notify</code>, plus <code>--provider NAME</code> to show one provider
+whether or not a route picks it. Prints a JSON list of
+<code>{"provider": ..., "payload": ...}</code> in delivery order. Nothing is sent and
+nothing is recorded. Credentials in a payload, such as PagerDuty's
+<code>routing_key</code>, are shown as <code>&lt;redacted&gt;</code>. Email's payload is its subject and
+body. Exits <code>2</code> on bad input, a config that fails to load, or a <code>--provider</code>
+that isn't configured.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

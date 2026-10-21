@@ -16,7 +16,7 @@
         <link rel="prev" href="../configuration/">
       
       
-        <link rel="next" href="../kubernetes/">
+        <link rel="next" href="../templates/">
       
       
         
@@ -527,6 +527,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -881,6 +908,12 @@ the file with <code>${VAR}</code> or a secret reference such as <code>${aws-sm:p
 </tr>
 </tbody>
 </table>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Every provider also takes an optional <code>template</code> block that replaces
+parts of its message with your own text. See
+<a href="../templates/">Message templates</a>.</p>
+</div>
 <p>All providers are in the base package. The one exception is email through
 the <a href="#amazon-ses-api">Amazon SES API</a>, which needs <code>opssignal[aws]</code>; email over
 SMTP, SES's SMTP endpoint included, needs no extra.</p>

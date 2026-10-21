@@ -616,6 +616,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -1467,6 +1494,11 @@ file in the chain stops loading, as a single local file does.</p>
 </table>
 <p><a href="../providers/">Providers</a> describes what each one sends and how to get its
 URL or key.</p>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Any provider can also set <code>template</code>, which replaces parts of the
+message it sends; see <a href="../templates/">Message templates</a>.</p>
+</div>
 <p>Unknown provider keys are rejected, so a typo such as <code>slak:</code> fails at load
 time instead of silently dropping a provider.</p>
 <h2 id="routes"><code>routes</code><a class="headerlink" href="#routes" title="Permanent link">&para;</a></h2>
@@ -1672,6 +1704,8 @@ placeholders, never the secrets.</p>
 <li>a <code>${store:...}</code> secret reference that is malformed, names an unknown store,
   or needs an extra that isn't installed</li>
 <li>a route that references an unconfigured provider, or lists no providers</li>
+<li>a provider <code>template</code> with a syntax error, a part that provider doesn't
+  have, or an unknown variable (see <a href="../templates/#mistakes-stop-the-load">Message templates</a>)</li>
 <li>an <code>extends</code> that is not a path or a list of paths, forms a cycle, goes more
   than 8 files deep, or (from a remote file) names a local path</li>
 <li><code>SIGNAL_CONFIG</code> pointing at a path that is not a file, or using an

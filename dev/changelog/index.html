@@ -386,6 +386,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -539,6 +566,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -567,7 +605,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -694,6 +732,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -722,7 +771,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -779,8 +828,29 @@ may still change config keys, the Python API and the SQLite schema.</p>
 <h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <p>Changes merged to <code>main</code> that are not in a release yet. They will ship in
 the next tag.</p>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Message templates per provider:</strong> an optional <code>template</code> block under any
+  provider replaces parts of its message with Jinja text, such as Slack's
+  <code>text</code>, PagerDuty's <code>summary</code>, Teams' <code>title</code>/<code>text</code>, Opsgenie's
+  <code>message</code>/<code>description</code>, email's <code>subject</code>/<code>body</code>, console's line, or the
+  whole webhook JSON <code>body</code>. Templates see every signal field plus
+  <code>metadata.*</code>. Syntax errors, unknown parts and unknown variables fail at
+  load time; a template that fails at send time falls back to the built-in
+  format, so the alert still goes out. Configs without templates send
+  exactly what they did before. Python and the C library get this from the
+  config, with no API change
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/32">#32</a>).</li>
+<li><code>opssignal preview</code> prints what each provider would be sent for a signal,
+  without sending or recording it, and <code>opssignal notify</code>/<code>preview</code> take
+  <code>--metadata</code> as a JSON object
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/32">#32</a>).</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>Rust API: <code>ConsoleProvider</code> is now a struct built with
+  <code>ConsoleProvider::new()</code>, and the <code>Provider</code> trait has a <code>preview</code> method
+  with a default, so existing implementations still compile.</li>
 <li>PyPI pages for <code>opssignal</code>, <code>opssignal-aws</code>, <code>opssignal-gcp</code> and
   <code>opssignal-azure</code> get a project description, links, keywords and
   classifiers (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/25">#25</a>).
@@ -790,7 +860,7 @@ the next tag.</p>
 <h2 id="100-beta1-2026-10-20"><a href="https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1">1.0.0-beta.1</a> - 2026-10-20<a class="headerlink" href="#100-beta1-2026-10-20" title="Permanent link">&para;</a></h2>
 <p>First public build, published to PyPI (<code>pip install --pre opssignal</code>) and
 crates.io (<code>opssignal-core</code>, <code>opssignal-cli</code>).</p>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Providers:</strong> Slack, Microsoft Teams, PagerDuty (Events API v2),
   Opsgenie, email (SMTP, or Amazon SES with <code>opssignal[aws]</code>), generic
