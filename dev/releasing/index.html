@@ -933,13 +933,18 @@ it. The first successful release turns each one into a normal publisher.</p>
 </ol>
 <h2 id="cutting-a-release">Cutting a release<a class="headerlink" href="#cutting-a-release" title="Permanent link">&para;</a></h2>
 <ol>
-<li>
-<p>Open a PR that turns <code>## [Unreleased]</code> in <code>CHANGELOG.md</code> into
+<li>Open a PR that turns <code>## [Unreleased]</code> in <code>CHANGELOG.md</code> into
    <code>## [X.Y.Z] - YYYY-MM-DD</code>, adds a fresh empty <code>## [Unreleased]</code> above
    it, updates the compare links at the bottom, and checks that every
    "Added in" note in <code>docs/</code> names this version. Merge it, so the tagged
-   commit's docs and changelog match the release.</p>
-</li>
+   commit's docs and changelog match the release.</li>
+</ol>
+<p>That section becomes the GitHub release notes: the workflow runs
+   <code>scripts/release_notes.py</code>, which adds install commands, the docs link
+   and a compare link to the previous tag. Write it for users (what they
+   get, what changed, what to watch for), not as a list of PRs. A tag
+   with no matching <code>## [X.Y.Z]</code> section stops the run before it builds.</p>
+<ol>
 <li>
 <p>Tag the commit on <code>main</code> you want to release and push the tag:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>tag<span class="w"> </span>v0.2.0
