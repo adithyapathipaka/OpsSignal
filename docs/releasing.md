@@ -106,7 +106,10 @@ crates.io only allows trusted publishing for crates that already exist.
     `scripts/set_version.py` to write `0.2.0` into `Cargo.toml`
     (`[workspace.package]` and the `opssignal-core` pin in `crates/cli`),
     the four `pyproject.toml` files, the extras pins in
-    `python/pyproject.toml`, and `opssignal.__version__`, then
+    `python/pyproject.toml`, and `opssignal.__version__`. It also points
+    the docs links PyPI shows (each package's Documentation URL and
+    README) at that version's docs, for example
+    `https://adithyapathipaka.github.io/OpsSignal/0.2.0/`. Then
     `scripts/check_versions.py` confirms they all agree. You don't need a
     version-bump commit.
 
