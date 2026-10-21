@@ -35,6 +35,18 @@ In **Settings > Environments**, create five environments: `pypi`,
 **required reviewer** on each, so a pushed tag waits for your click before
 anything is uploaded (the Actions run lets you approve them all at once).
 
+### Docs site
+
+The docs are published by `.github/workflows/docs.yml` to the `gh-pages`
+branch, one copy per version (built with
+[mike](https://github.com/jimporter/mike)). The first run creates the
+branch. Then, in **Settings > Pages**, set **Source** to **Deploy from a
+branch**, branch `gh-pages`, folder `/ (root)`.
+
+To publish docs for a tag that was cut before versioned docs existed, run
+**Actions > Docs > Run workflow** on `main` with that tag, for example
+`v1.0.0-beta.1`.
+
 ### PyPI: trusted publishing
 
 The projects don't exist yet, so register a *pending* publisher for each one
@@ -117,6 +129,11 @@ The run uploads the three add-ons first, then `opssignal` (its extras pin
 the add-ons, so they must exist first), then `opssignal-core` and
 `opssignal-cli`, and finally creates a GitHub release with every wheel and
 sdist attached.
+
+The same tag also publishes that version's docs: the site gets a
+`X.Y.Z` (or `X.Y.Z-beta.N`) entry in its version picker, and if it is the
+highest tag, `latest` (what the site's home page opens) moves to it. Merges
+to `main` keep updating the `dev` version. This needs no approval.
 
 To build and test everything without publishing, run the workflow by hand
 from **Actions > Release > Run workflow**. Pull requests don't run it, to

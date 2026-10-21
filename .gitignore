@@ -31,3 +31,4 @@ signal.yaml
 .idea
 
 uv.locksite/
+docs/rust/

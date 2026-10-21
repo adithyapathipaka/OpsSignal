@@ -32,6 +32,7 @@ jobs:
               - '!docs/**'
               - '!**/*.md'
               - '!mkdocs.yml'
+              - '!overrides/**'
               - '!.github/workflows/docs.yml'
 
   rust:
