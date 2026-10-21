@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/reference/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/reference/">
       
       
         <link rel="prev" href="../releasing/">
@@ -86,6 +86,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -372,6 +384,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -434,6 +473,33 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
   
 
     
@@ -551,7 +617,8 @@
 <h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
 <p>The Rust API of <code>opssignal-core</code> is generated with <code>cargo doc</code> and published
 with this site:</p>
-<p><strong><a href="https://adithyapathipaka.github.io/OpsSignal/rust/opssignal_core/">Open the opssignal-core API reference</a></strong></p>
+<p><a href="../rust/opssignal_core/"><strong>Open the opssignal-core API reference</strong></a></p>
+<p>The reference matches the docs version picked at the top of the page.</p>
 <p>The parts most callers need:</p>
 <table>
 <thead>
@@ -579,7 +646,11 @@ with this site:</p>
 </tr>
 <tr>
 <td><code>SignalClient::notify_sync(SignalInput, Duration)</code></td>
-<td>Blocking delivery with a timeout. Returns a <code>DeliveryResult</code>.</td>
+<td>Blocking delivery with a timeout. Returns a <code>DeliveryResult</code>, whose <code>deliveries</code> lists each provider's outcome.</td>
+</tr>
+<tr>
+<td><code>routing::DeliveryMode</code></td>
+<td>A route's <code>mode</code>: <code>Failover</code> (default) or <code>Fanout</code>.</td>
 </tr>
 <tr>
 <td><code>config::Config::{discover, from_file, from_yaml_str}</code></td>
@@ -656,7 +727,7 @@ signals still being delivered are cut off (they stay recorded as <code>pending</
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>

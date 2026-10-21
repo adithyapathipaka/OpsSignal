@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/">
       
       
       
@@ -86,6 +86,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../.">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -474,6 +486,33 @@
   
   
     <li class="md-nav__item">
+      <a href="templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="kubernetes/" class="md-nav__link">
         
   
@@ -536,6 +575,33 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
   
 
     
@@ -708,11 +774,19 @@
 routed operational notifications: Slack, webhooks, and more, from a single
 event model.</p>
 <div class="admonition warning">
-<p class="admonition-title">Status: early alpha (v0.1 in progress)</p>
-<p>The one real, tested integration target today is <strong>Airflow</strong>, via the
-Python bindings. The CLI and a C ABI (for future Java/Go bindings) exist
-but are young. Treat this as an Airflow/dbt-shop tool for now, not yet the
-generic "any backend application" SDK it aims to become.</p>
+<p class="admonition-title">Status: beta (latest release v1.0.0-beta.1)</p>
+<p>Config keys, the Python API and the SQLite schema may still change before
+1.0.0. The most-tested integration targets are <strong>Airflow</strong> and <strong>dbt</strong>,
+via the Python bindings. The CLI and a C ABI (for future Java/Go
+bindings) exist but are young.</p>
+</div>
+<div class="admonition info">
+<p class="admonition-title">Which release has which feature</p>
+<p>Use the version picker at the top to read the docs for the release you
+installed; <code>latest</code> is the newest release and <code>dev</code> is the unreleased
+<code>main</code> branch. Within a version, features newer than v1.0.0-beta.1 carry
+an <strong>"Added in"</strong> note naming the release that brings them.
+See <a href="changelog/">Releases</a> for what changed in each version.</p>
 </div>
 <h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>flowchart LR
@@ -741,34 +815,31 @@ notifications.</p>
 <li><a href="cli/">CLI</a>: flags and exit codes for shell and CI use.</li>
 <li><a href="ARCHITECTURE/">Architecture</a>: components, delivery semantics, design rules.</li>
 <li><a href="reference/">API reference</a>: generated Rust docs for <code>opssignal-core</code>.</li>
+<li><a href="changelog/">Releases</a>: what changed in each version.</li>
 </ul>
 <h2 id="roadmap">Roadmap<a class="headerlink" href="#roadmap" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Version</th>
+<th>Release</th>
 <th>Scope</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>v0.1 (current)</td>
-<td>Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI</td>
+<td>v1.0.0-beta.1 (released)</td>
+<td>Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI, C ABI</td>
 </tr>
 <tr>
-<td>v0.2</td>
-<td>Dedup, retry/backoff tuning, Alertmanager provider</td>
+<td>Next beta</td>
+<td>Fan-out delivery mode for routes</td>
 </tr>
 <tr>
-<td>v0.3</td>
-<td>Postgres sink</td>
+<td>Later</td>
+<td>Dedup, retry/backoff tuning, Alertmanager provider; Postgres sink; Dagster + Prefect adapters</td>
 </tr>
 <tr>
-<td>v0.4</td>
-<td>Dagster + Prefect adapters</td>
-</tr>
-<tr>
-<td>v0.5+</td>
+<td>Only on demand</td>
 <td>Java/Go bindings, only if real external demand appears</td>
 </tr>
 </tbody>
@@ -831,7 +902,7 @@ notifications.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="assets/javascripts/bundle.d7400e89.min.js"></script>

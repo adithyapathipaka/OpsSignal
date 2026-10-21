@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/ARCHITECTURE/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/ARCHITECTURE/">
       
       
         <link rel="prev" href="../cli/">
       
       
-        <link rel="next" href="../releasing/">
+        <link rel="next" href="../changelog/">
       
       
         
@@ -88,6 +88,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -374,6 +386,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -593,10 +632,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#whats-deliberately-out-of-scope-v01" class="md-nav__link">
+  <a href="#whats-deliberately-out-of-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What's deliberately out of scope (v0.1)
+        What's deliberately out of scope
       
     </span>
   </a>
@@ -618,6 +657,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -808,10 +874,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#whats-deliberately-out-of-scope-v01" class="md-nav__link">
+  <a href="#whats-deliberately-out-of-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What's deliberately out of scope (v0.1)
+        What's deliberately out of scope
       
     </span>
   </a>
@@ -906,15 +972,37 @@ invocation.</p>
     Client-&gt;&gt;Client: validate, assign id + timestamp + dedup key
     Client-&gt;&gt;Sink: record(signal), status pending
     Client--&gt;&gt;App: returns
-    Client-&gt;&gt;Router: resolve(signal)
-    Router--&gt;&gt;Client: provider names (never empty, console fallback)
-    loop each provider until one succeeds
-        Client-&gt;&gt;Provider: send(signal), up to 3 attempts with backoff
-        Provider--&gt;&gt;Client: Ok / Err
+    Client-&gt;&gt;Router: plan(signal)
+    Router--&gt;&gt;Client: delivery targets (never empty, console fallback)
+    par each target, concurrently
+        loop each provider of the target until one succeeds
+            Client-&gt;&gt;Sink: provider_outcome(pending)
+            Client-&gt;&gt;Provider: send(signal), up to 3 attempts with backoff
+            Provider--&gt;&gt;Client: Ok / Err
+            Client-&gt;&gt;Sink: provider_outcome(delivered / failed)
+        end
     end
     Client-&gt;&gt;Sink: complete(signal, delivery result)</code></pre>
 <p><code>notify_sync</code> runs the same steps but blocks the caller until the result is
 known or the timeout expires.</p>
+<p>A delivery plan is a list of targets, each an ordered list of providers. A
+<code>failover</code> route's providers join the one shared failover target; each
+provider of a <code>fanout</code> route is a target of its own. Targets run concurrently
+and never share retries, so a provider that delivered is never sent the
+signal again because another provider failed. The overall status is
+<code>delivered</code> (every target succeeded), <code>partial</code> (some did) or <code>failed</code>. A
+config without <code>fanout</code> has a single target and behaves exactly as it did
+before delivery modes existed.</p>
+<p>Routes that set <code>dedup</code> or <code>rate_limit</code> are checked while the plan is built,
+on the caller's thread, so repeats are judged in the order they were sent. A
+route held back adds no providers; if every matching route was held back, the
+plan is empty and the signal is stored as <code>skipped</code> (the console fallback is
+only for signals that match nothing). The history is a <code>throttle</code> table in the
+sink's SQLite file, written inside an <code>IMMEDIATE</code> transaction, so every
+process on a host that shares the file sees the same windows. A send that
+ends <code>failed</code> is removed again so it can't suppress the next occurrence. Any
+error reading the history lets the signal through. Coordinating across hosts
+is deliberately not part of the embedded SDK.</p>
 <p><code>notify_async</code> callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
 would cut them off. <code>SignalClient::flush(timeout)</code> waits for them, and every
@@ -967,6 +1055,9 @@ still lands if the sink has recovered.</p>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="w">    </span><span class="sd">/// After delivery: store the outcome (an upsert; must work without `record`).</span>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">complete</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">DeliveryResult</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// During delivery: one provider's outcome, pending then delivered/failed.</span>
+<span class="w">    </span><span class="sd">/// Optional; defaults to doing nothing.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">provider_outcome</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">signal</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Signal</span><span class="p">,</span><span class="w"> </span><span class="n">outcome</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ProviderOutcome</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SignalError</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>A sink is a <strong>write-only side effect</strong>, not a queryable API. This SDK does
@@ -1056,7 +1147,7 @@ via JNI/cgo. <code>crates/python</code> uses PyO3 macros directly, which is a di
 (and for Python, more idiomatic and lower-overhead) binding mechanism than
 hand-rolled C ABI. Both wrap the same <code>opssignal-core</code> logic; neither contains
 business logic of its own.</p>
-<h2 id="whats-deliberately-out-of-scope-v01">What's deliberately out of scope (v0.1)<a class="headerlink" href="#whats-deliberately-out-of-scope-v01" title="Permanent link">&para;</a></h2>
+<h2 id="whats-deliberately-out-of-scope">What's deliberately out of scope<a class="headerlink" href="#whats-deliberately-out-of-scope" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Event bus / message queue semantics</li>
 <li>Event sourcing, complex event processing</li>
@@ -1146,7 +1237,7 @@ business logic of its own.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>

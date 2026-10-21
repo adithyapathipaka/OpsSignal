@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/cli/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/cli/">
       
       
         <link rel="prev" href="../kubernetes/">
@@ -88,6 +88,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -374,6 +386,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -483,6 +522,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -516,6 +566,33 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
   
 
     
@@ -631,6 +708,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -723,6 +811,12 @@ uses the same Rust core, config and routing as the Python package.</p>
 <td>Used by routes that match on <code>environment</code>.</td>
 </tr>
 <tr>
+<td><code>--metadata</code></td>
+<td>no</td>
+<td></td>
+<td>A JSON object, such as <code>'{"dag_id": "orders"}'</code>, for <a href="../templates/">templates</a> to use. Added in v1.0.0-beta.2.</td>
+</tr>
+<tr>
 <td><code>--config</code></td>
 <td>no</td>
 <td></td>
@@ -732,6 +826,26 @@ uses the same Rust core, config and routing as the Python package.</p>
 </table>
 <p>Unlike the Python <code>notify()</code>, the CLI waits for delivery, with a 5 second
 timeout, so a CI step can fail when an alert didn't go out.</p>
+<h2 id="opssignal-preview"><code>opssignal preview</code><a class="headerlink" href="#opssignal-preview" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Prints what each provider would be sent, for checking
+<a href="../templates/">message templates</a>.</p>
+</div>
+<div class="highlight"><pre><span></span><code>opssignal<span class="w"> </span>preview<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--source<span class="w"> </span>airflow<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--event-type<span class="w"> </span>task_failed<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--severity<span class="w"> </span>error<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--title<span class="w"> </span><span class="s2">"load failed"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--metadata<span class="w"> </span><span class="s1">'{"dag_id": "orders"}'</span>
+</code></pre></div>
+<p>Takes the same flags as <code>notify</code>, plus <code>--provider NAME</code> to show one provider
+whether or not a route picks it. Prints a JSON list of
+<code>{"provider": ..., "payload": ...}</code> in delivery order. Nothing is sent and
+nothing is recorded. Credentials in a payload, such as PagerDuty's
+<code>routing_key</code>, are shown as <code>&lt;redacted&gt;</code>. Email's payload is its subject and
+body. Exits <code>2</code> on bad input, a config that fails to load, or a <code>--provider</code>
+that isn't configured.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -743,11 +857,11 @@ timeout, so a CI step can fail when an alert didn't go out.</p>
 <tbody>
 <tr>
 <td><code>0</code></td>
-<td>Delivered.</td>
+<td>Delivered, or held back by a route's <a href="../configuration/#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a> (stderr then shows <code>suppressed: ...</code> with the reason).</td>
 </tr>
 <tr>
 <td><code>1</code></td>
-<td>Delivery failed or timed out. The failure is still recorded in the sink.</td>
+<td>Delivery failed or timed out, or a <a href="../configuration/#delivery-modes"><code>fanout</code></a> route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result.</td>
 </tr>
 <tr>
 <td><code>2</code></td>
@@ -811,7 +925,7 @@ timeout, so a CI step can fail when an alert didn't go out.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>

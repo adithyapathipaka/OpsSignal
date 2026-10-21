@@ -10,10 +10,10 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/releasing/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/releasing/">
       
       
-        <link rel="prev" href="../ARCHITECTURE/">
+        <link rel="prev" href="../changelog/">
       
       
         <link rel="next" href="../reference/">
@@ -88,6 +88,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -374,6 +386,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -436,6 +475,33 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
   
 
     
@@ -531,6 +597,17 @@
     <span class="md-ellipsis">
       
         GitHub environments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-site" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docs site
       
     </span>
   </a>
@@ -664,6 +741,17 @@
     <span class="md-ellipsis">
       
         GitHub environments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-site" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docs site
       
     </span>
   </a>
@@ -807,6 +895,15 @@ crates.io needs a token for the first release only.</p>
 <code>pypi-aws</code>, <code>pypi-gcp</code>, <code>pypi-azure</code> and <code>crates-io</code>. Add yourself as a
 <strong>required reviewer</strong> on each, so a pushed tag waits for your click before
 anything is uploaded (the Actions run lets you approve them all at once).</p>
+<h3 id="docs-site">Docs site<a class="headerlink" href="#docs-site" title="Permanent link">&para;</a></h3>
+<p>The docs are published by <code>.github/workflows/docs.yml</code> to the <code>gh-pages</code>
+branch, one copy per version (built with
+<a href="https://github.com/jimporter/mike">mike</a>). The first run creates the
+branch. Then, in <strong>Settings &gt; Pages</strong>, set <strong>Source</strong> to <strong>Deploy from a
+branch</strong>, branch <code>gh-pages</code>, folder <code>/ (root)</code>.</p>
+<p>To publish docs for a tag that was cut before versioned docs existed, run
+<strong>Actions &gt; Docs &gt; Run workflow</strong> on <code>main</code> with that tag, for example
+<code>v1.0.0-beta.1</code>.</p>
 <h3 id="pypi-trusted-publishing">PyPI: trusted publishing<a class="headerlink" href="#pypi-trusted-publishing" title="Permanent link">&para;</a></h3>
 <p>The projects don't exist yet, so register a <em>pending</em> publisher for each one
 at <a href="https://pypi.org/manage/account/publishing/">https://pypi.org/manage/account/publishing/</a> (do the same on
@@ -863,6 +960,18 @@ it. The first successful release turns each one into a normal publisher.</p>
 </ol>
 <h2 id="cutting-a-release">Cutting a release<a class="headerlink" href="#cutting-a-release" title="Permanent link">&para;</a></h2>
 <ol>
+<li>Open a PR that turns <code>## [Unreleased]</code> in <code>CHANGELOG.md</code> into
+   <code>## [X.Y.Z] - YYYY-MM-DD</code>, adds a fresh empty <code>## [Unreleased]</code> above
+   it, updates the compare links at the bottom, and checks that every
+   "Added in" note in <code>docs/</code> names this version. Merge it, so the tagged
+   commit's docs and changelog match the release.</li>
+</ol>
+<p>That section becomes the GitHub release notes: the workflow runs
+   <code>scripts/release_notes.py</code>, which adds install commands, the docs link
+   and a compare link to the previous tag. Write it for users (what they
+   get, what changed, what to watch for), not as a list of PRs. A tag
+   with no matching <code>## [X.Y.Z]</code> section stops the run before it builds.</p>
+<ol>
 <li>
 <p>Tag the commit on <code>main</code> you want to release and push the tag:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>tag<span class="w"> </span>v0.2.0
@@ -872,7 +981,10 @@ git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </
 <code>scripts/set_version.py</code> to write <code>0.2.0</code> into <code>Cargo.toml</code>
 (<code>[workspace.package]</code> and the <code>opssignal-core</code> pin in <code>crates/cli</code>),
 the four <code>pyproject.toml</code> files, the extras pins in
-<code>python/pyproject.toml</code>, and <code>opssignal.__version__</code>, then
+<code>python/pyproject.toml</code>, and <code>opssignal.__version__</code>. It also points
+the docs links PyPI shows (each package's Documentation URL and
+README) at that version's docs, for example
+<code>https://adithyapathipaka.github.io/OpsSignal/0.2.0/</code>. Then
 <code>scripts/check_versions.py</code> confirms they all agree. You don't need a
 version-bump commit.</p>
 <p>Tags are <code>vX.Y.Z</code> for a release, or <code>vX.Y.Z-alpha.N</code>, <code>-beta.N</code> or
@@ -895,6 +1007,10 @@ released; the tags do.</p>
 the add-ons, so they must exist first), then <code>opssignal-core</code> and
 <code>opssignal-cli</code>, and finally creates a GitHub release with every wheel and
 sdist attached.</p>
+<p>The same tag also publishes that version's docs: the site gets a
+<code>X.Y.Z</code> (or <code>X.Y.Z-beta.N</code>) entry in its version picker, and if it is the
+highest tag, <code>latest</code> (what the site's home page opens) moves to it. Merges
+to <code>main</code> keep updating the <code>dev</code> version. This needs no approval.</p>
 <p>To build and test everything without publishing, run the workflow by hand
 from <strong>Actions &gt; Release &gt; Run workflow</strong>. Pull requests don't run it, to
 save Actions minutes, so do this before tagging if a change touched the
@@ -968,7 +1084,7 @@ on either registry, even after it is yanked or deleted.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>

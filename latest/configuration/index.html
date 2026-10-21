@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.1/configuration/">
+        <link rel="canonical" href="https://adithyapathipaka.github.io/OpsSignal/1.0.0-beta.2/configuration/">
       
       
         <link rel="prev" href="../getting-started/">
@@ -88,6 +88,18 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the docs for a version that isn't the latest release.
+  <a href="../..">
+    <strong>Go to the latest release.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
         
       </div>
     
@@ -499,6 +511,51 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dedup-and-rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup and rate limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dedup and rate limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dedup-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -587,6 +644,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -649,6 +733,33 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
   
 
     
@@ -860,6 +971,51 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dedup-and-rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup and rate limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dedup and rate limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dedup-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1306,9 +1462,11 @@ than once, such as a default that every team extends, is loaded once.</p>
 </tr>
 </tbody>
 </table>
-<p>Because delivery stops at the first provider that succeeds (see
-<a href="#routes"><code>routes</code></a>), a team route that matches a signal effectively decides
-where it goes, and the inherited providers become its fallbacks. Routes are
+<p>Because a <code>failover</code> route stops at the first provider that succeeds (see
+<a href="#delivery-modes">delivery modes</a>), a team route that matches a signal
+effectively decides where it goes, and the inherited failover providers become
+its fallbacks. An inherited <code>fanout</code> route still delivers to all of its
+providers. Routes are
 checked after merging, so a team file can route to a provider that only its
 parent configures. A route naming an unknown provider is reported with the
 file it is in, such as <code>teams/payments.yaml: routes[0] references provider
@@ -1392,6 +1550,11 @@ file in the chain stops loading, as a single local file does.</p>
 </table>
 <p><a href="../providers/">Providers</a> describes what each one sends and how to get its
 URL or key.</p>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Any provider can also set <code>template</code>, which replaces parts of the
+message it sends; see <a href="../templates/">Message templates</a>.</p>
+</div>
 <p>Unknown provider keys are rejected, so a typo such as <code>slak:</code> fails at load
 time instead of silently dropping a provider.</p>
 <h2 id="routes"><code>routes</code><a class="headerlink" href="#routes" title="Permanent link">&para;</a></h2>
@@ -1423,15 +1586,147 @@ time instead of silently dropping a provider.</p>
 </tr>
 </tbody>
 </table>
-<p>The matching routes' providers form an ordered list (in file order, with
-consecutive duplicates removed). Delivery tries them in that order and
-<strong>stops at the first one that succeeds</strong>. Each provider gets up to 3
-attempts with exponential backoff before the next one is tried. Later
-providers are therefore fallbacks, not extra copies.</p>
+<p>A route can also set <code>mode</code>, which decides what its list of providers means:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Values</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mode</code></td>
+<td><code>failover</code>, <code>fanout</code></td>
+<td><code>failover</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="delivery-modes">Delivery modes<a class="headerlink" href="#delivery-modes" title="Permanent link">&para;</a></h3>
+<p><strong><code>failover</code></strong> (the default): the providers are tried in order and delivery
+<strong>stops at the first one that succeeds</strong>. Each provider gets up to 3 attempts
+with exponential backoff before the next one is tried. Later providers are
+fallbacks, not extra copies.</p>
+<p><strong><code>fanout</code></strong>: the signal goes to <strong>every</strong> provider in the list at the same
+time. Each provider is retried on its own (up to 3 attempts), so a failing
+PagerDuty never causes a second Slack message, and a slow provider never
+holds up the others.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Page on-call and tell the channel, every time.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fanout</span>
+<span class="w">  </span><span class="c1"># Everything else: Teams, or email if Teams is down.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">teams</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">email</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>When several routes match one signal:</p>
+<ul>
+<li>each provider of a matching <code>fanout</code> route is delivered to on its own;</li>
+<li>the providers of all matching <code>failover</code> routes form one ordered list (in
+  file order), which is delivered to alongside the fan-out providers and stops
+  at its first success, exactly as before <code>fanout</code> existed;</li>
+<li>a provider named by more than one matching route is used once, at its
+  first position, so it never receives the same signal twice.</li>
+</ul>
+<p>In the example above, a critical prod signal goes to PagerDuty, Slack, and
+Teams (falling back to email); any other signal goes to Teams, falling back to
+email.</p>
+<p>The outcome is <code>delivered</code> when every fan-out provider and the failover list
+succeeded, <code>failed</code> when none did, and <code>partial</code> when some did. The sink keeps
+each provider's result too; see <a href="#storage"><code>storage</code></a>.</p>
 <p>If no route matches, the list is just <code>console</code>. That fallback is built into
 the routing engine and cannot be configured away.</p>
+<h3 id="dedup-and-rate-limits">Dedup and rate limits<a class="headerlink" href="#dedup-and-rate-limits" title="Permanent link">&para;</a></h3>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p>Routes can set <code>dedup</code> and <code>rate_limit</code>.</p>
+</div>
+<p>A failing job that retries every minute, or one bad deploy that breaks 200
+DAGs, should page once, not hundreds of times. Two optional route fields hold
+back the repeats:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dedup</code></td>
+<td>a window: <code>30s</code>, <code>10m</code>, <code>2h</code>, <code>1d</code> (a bare number is seconds)</td>
+<td>The route sends each <a href="#dedup-keys">dedup key</a> at most once per window. Repeats inside the window are suppressed.</td>
+</tr>
+<tr>
+<td><code>rate_limit</code></td>
+<td><code>{max: N, per: &lt;window&gt;}</code></td>
+<td>The route sends at most <code>N</code> signals in any sliding <code>per</code> window, whatever their key. Signals over the limit are suppressed.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># One page per incident every 30 minutes, and never more than 10 pages</span>
+<span class="w">  </span><span class="c1"># an hour even if every DAG fails at once.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fanout</span>
+<span class="w">    </span><span class="nt">dedup</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30m</span>
+<span class="w">    </span><span class="nt">rate_limit</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+<span class="w">      </span><span class="nt">per</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1h</span>
+<span class="w">  </span><span class="c1"># The channel still gets every warning, unthrottled.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">warning</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">error</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>How they behave:</p>
+<ul>
+<li><strong>Per route.</strong> A suppressed route adds none of its providers for that
+  signal; other matching routes still send. To page once but keep every
+  occurrence in a channel, give the paging route a <code>dedup</code> and add an
+  unthrottled route for the channel.</li>
+<li><strong>The window starts at the last send</strong>, not the last repeat, so a
+  long-running incident re-alerts once per <code>dedup</code> window as a reminder.</li>
+<li><strong>Only sends count.</strong> A suppressed signal does not use up the <code>rate_limit</code>,
+  and a signal that no provider delivered (status <code>failed</code>) is taken back, so
+  the next occurrence is tried again instead of being suppressed as a
+  duplicate of an alert nobody received.</li>
+<li><strong>Suppressed signals are still recorded</strong> in the sink with status
+  <code>skipped</code> and the reason in <code>error</code>, for example
+  <code>route [pagerduty, slack]: duplicate of a signal sent 4m ago (dedup 30m)</code>.
+  If a signal was suppressed on one route and delivered on another, its
+  status is the delivered one.</li>
+<li><strong>Shared by every process on the host</strong> that uses the same
+  <a href="#storage"><code>storage.path</code></a>: the history is kept in that SQLite file, so a
+  CLI run from cron, each Airflow task process and a restarted service all
+  see the same windows. Hosts do not share it with each other.</li>
+<li><strong>Editing a route</strong> (its match, providers, mode or limits) starts its
+  history afresh.</li>
+<li>If the history can't be read (for example the file is locked by another
+  process for more than 2 seconds), the signal is sent. Throttling never
+  costs you an alert.</li>
+</ul>
+<p>A signal no route matches still goes to <code>console</code>; that fallback is never
+suppressed.</p>
+<h4 id="dedup-keys">Dedup keys<a class="headerlink" href="#dedup-keys" title="Permanent link">&para;</a></h4>
+<p>Each signal's dedup key is the one the caller passed (<code>dedup_key=</code> in Python,
+<code>dedup_key</code> in the C JSON payload), or else a hash of its <code>source</code>,
+<code>event_type</code>, <code>title</code> and <code>environment</code>. Severity and message are not part of
+it, so a retry with a new error message is still the same incident. Pass your
+own key, such as the DAG and task id, when the title changes between retries.</p>
 <p>A route that names a provider not configured under <code>providers</code> is a load-time
-error, as is a route with an empty <code>providers</code> list.</p>
+error, as is a route with an empty <code>providers</code> list, an unknown <code>mode</code>, a
+<code>dedup</code> or <code>rate_limit</code> of zero, or an unknown key (so a typo such as
+<code>mod: fanout</code> fails at load time instead of leaving the route on failover).
+Unknown keys inside <code>match</code> are rejected too, so a typo such as
+<code>enviroment: prod</code> fails at load time instead of matching every signal.</p>
 <h2 id="storage"><code>storage</code><a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1454,6 +1749,19 @@ error, as is a route with an empty <code>providers</code> list.</p>
 </tr>
 </tbody>
 </table>
+<p>The SQLite file has two tables. <code>signals</code> holds one row per signal, with its
+overall <code>delivery_status</code> (<code>pending</code>, then <code>delivered</code>, <code>partial</code> or <code>failed</code>)
+and <code>provider</code>, the comma-separated providers that delivered it.
+<code>deliveries</code> holds one row per signal and provider, keyed by <code>signal_id</code> and
+<code>provider</code>: <code>pending</code> before the provider's first attempt, then <code>delivered</code> or
+<code>failed</code>, with its <code>error</code> and <code>attempts</code>. A process that exits in the middle
+of a fan-out therefore still shows which providers already have the signal.
+Databases created by earlier versions get the <code>deliveries</code> table the next time
+they are opened.</p>
+<p>A third table, <code>throttle</code>, holds the recent sends of routes that set
+<a href="#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a>. Rows older than a route's
+windows are deleted as it sends. Signals those settings held back are stored
+in <code>signals</code> with status <code>skipped</code>.</p>
 <p>Every signal is written to the sink with its delivery status (<code>delivered</code> or
 <code>failed</code>), the provider that delivered it, and any error.</p>
 <h2 id="environment-variables-in-values">Environment variables in values<a class="headerlink" href="#environment-variables-in-values" title="Permanent link">&para;</a></h2>
@@ -1539,6 +1847,8 @@ placeholders, never the secrets.</p>
 <li>a <code>${store:...}</code> secret reference that is malformed, names an unknown store,
   or needs an extra that isn't installed</li>
 <li>a route that references an unconfigured provider, or lists no providers</li>
+<li>a provider <code>template</code> with a syntax error, a part that provider doesn't
+  have, or an unknown variable (see <a href="../templates/#mistakes-stop-the-load">Message templates</a>)</li>
 <li>an <code>extends</code> that is not a path or a list of paths, forms a cycle, goes more
   than 8 files deep, or (from a remote file) names a local path</li>
 <li><code>SIGNAL_CONFIG</code> pointing at a path that is not a file, or using an
@@ -1604,7 +1914,7 @@ described in <a href="#remote-configs">Remote configs</a>.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>

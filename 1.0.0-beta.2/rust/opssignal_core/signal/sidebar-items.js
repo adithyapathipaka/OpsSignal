@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Severity","SignalError"],"fn":["validate"],"struct":["Signal","SignalInput"]};

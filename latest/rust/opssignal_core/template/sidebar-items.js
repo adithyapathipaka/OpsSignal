@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SIGNAL_VARIABLES"],"fn":["render"],"struct":["Templates"],"type":["TemplateConfig"]};
