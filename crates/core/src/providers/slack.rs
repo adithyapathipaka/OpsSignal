@@ -1,9 +1,11 @@
 use crate::delivery::Provider;
 use crate::signal::{Severity, Signal, SignalError};
+use crate::template::{self, Templates};
 
 pub struct SlackProvider {
     pub webhook_url: String,
     client: reqwest::Client,
+    templates: Option<Templates>,
 }
 
 impl SlackProvider {
@@ -11,7 +13,14 @@ impl SlackProvider {
         SlackProvider {
             webhook_url,
             client: reqwest::Client::new(),
+            templates: None,
         }
+    }
+
+    /// Uses `templates` for the parts they set; see [`crate::template`].
+    pub fn with_templates(mut self, templates: Option<Templates>) -> Self {
+        self.templates = templates;
+        self
     }
 
     fn emoji_for(severity: Severity) -> &'static str {
@@ -31,14 +40,12 @@ impl Provider for SlackProvider {
         "slack"
     }
 
+    fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
+        Some(self.body_for(signal))
+    }
+
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
-        let text = format!(
-            "{} *{}*\n{}",
-            Self::emoji_for(signal.severity),
-            signal.title,
-            signal.message.clone().unwrap_or_default()
-        );
-        let body = serde_json::json!({ "text": text });
+        let body = self.body_for(signal);
 
         let resp = self
             .client
@@ -55,6 +62,21 @@ impl Provider for SlackProvider {
             )));
         }
         Ok(())
+    }
+}
+
+impl SlackProvider {
+    fn body_for(&self, signal: &Signal) -> serde_json::Value {
+        let emoji = Self::emoji_for(signal.severity);
+        let text = template::render(&self.templates, "text", signal, &[("emoji", emoji.into())])
+            .unwrap_or_else(|| {
+                format!(
+                    "{emoji} *{}*\n{}",
+                    signal.title,
+                    signal.message.clone().unwrap_or_default()
+                )
+            });
+        serde_json::json!({ "text": text })
     }
 }
 
@@ -164,5 +186,49 @@ mod tests {
             .await
             .expect_err("connection refused must fail");
         assert!(matches!(err, SignalError::Delivery(_)));
+    }
+
+    #[tokio::test]
+    async fn text_template_replaces_the_default() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_json(serde_json::json!({
+                "text": ":x: airflow/task_failed: dbt model failed (model orders timed out)"
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        SlackProvider::new(server.uri())
+            .with_templates(template::for_test(
+                "slack",
+                &[(
+                    "text",
+                    "{{ emoji }} {{ source }}/{{ event_type }}: {{ title }}{% if message %} ({{ message }}){% endif %}",
+                )],
+            ))
+            .send(&signal(Severity::Error, Some("model orders timed out")))
+            .await
+            .expect("delivered");
+    }
+
+    #[tokio::test]
+    async fn failing_template_sends_the_default() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_json(serde_json::json!({
+                "text": ":x: *dbt model failed*\n"
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        SlackProvider::new(server.uri())
+            .with_templates(template::for_test("slack", &[("text", "{{ title + 1 }}")]))
+            .send(&signal(Severity::Error, None))
+            .await
+            .expect("delivered");
     }
 }

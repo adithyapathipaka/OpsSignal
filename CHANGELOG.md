@@ -13,8 +13,29 @@ The Python packages use PEP 440 spelling for the same version, so
 Changes merged to `main` that are not in a release yet. They will ship in
 the next tag.
 
+### Added
+
+- **Message templates per provider:** an optional `template` block under any
+  provider replaces parts of its message with Jinja text, such as Slack's
+  `text`, PagerDuty's `summary`, Teams' `title`/`text`, Opsgenie's
+  `message`/`description`, email's `subject`/`body`, console's line, or the
+  whole webhook JSON `body`. Templates see every signal field plus
+  `metadata.*`. Syntax errors, unknown parts and unknown variables fail at
+  load time; a template that fails at send time falls back to the built-in
+  format, so the alert still goes out. Configs without templates send
+  exactly what they did before. Python and the C library get this from the
+  config, with no API change
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
+- `opssignal preview` prints what each provider would be sent for a signal,
+  without sending or recording it, and `opssignal notify`/`preview` take
+  `--metadata` as a JSON object
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
+
 ### Changed
 
+- Rust API: `ConsoleProvider` is now a struct built with
+  `ConsoleProvider::new()`, and the `Provider` trait has a `preview` method
+  with a default, so existing implementations still compile.
 - PyPI pages for `opssignal`, `opssignal-aws`, `opssignal-gcp` and
   `opssignal-azure` get a project description, links, keywords and
   classifiers ([#25](https://github.com/adithyapathipaka/OpsSignal/pull/25)).

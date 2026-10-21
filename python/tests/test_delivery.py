@@ -261,3 +261,52 @@ def test_fanout_route_delivers_to_every_provider(tmp_path):
         "[('delivered', 'slack,webhook')]",
         "[('slack', 'delivered'), ('webhook', 'delivered')]",
     ], rows.stderr
+
+
+class _BodyHook(http.server.BaseHTTPRequestHandler):
+    bodies: typing.ClassVar[list] = []
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        _BodyHook.bodies.append(json.loads(body))
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_provider_template_shapes_the_message(tmp_path):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BodyHook)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    config = tmp_path / "signal.yaml"
+    config.write_text(
+        textwrap.dedent(
+            f"""\
+            providers:
+              slack:
+                webhook_url: "http://127.0.0.1:{server.server_port}/slack"
+                template:
+                  text: "{{{{ emoji }}}} {{{{ title }}}} (dag {{{{ metadata.dag_id }}}})"
+            routes:
+              - match: {{}}
+                providers: [slack]
+            storage:
+              path: "{tmp_path / "signals.db"}"
+            """
+        )
+    )
+    try:
+        result = _run_isolated(
+            """
+            from opssignal import flush, notify
+            notify(source="pytest", event_type="check", title="load failed",
+                   severity="error", metadata={"dag_id": "orders"})
+            assert flush(10.0)
+            """,
+            {"SIGNAL_CONFIG": str(config)},
+        )
+    finally:
+        server.shutdown()
+    assert result.returncode == 0, result.stderr
+    assert _BodyHook.bodies == [{"text": ":x: load failed (dag orders)"}]

@@ -1,5 +1,6 @@
 use crate::delivery::Provider;
 use crate::signal::{Severity, Signal, SignalError};
+use crate::template::{self, Templates};
 
 /// Events API v2 endpoint for US-hosted accounts. EU accounts use
 /// `https://events.eu.pagerduty.com/v2/enqueue`, set through `url`.
@@ -17,6 +18,7 @@ pub struct PagerDutyProvider {
     routing_key: String,
     pub url: String,
     client: reqwest::Client,
+    templates: Option<Templates>,
 }
 
 impl PagerDutyProvider {
@@ -25,7 +27,14 @@ impl PagerDutyProvider {
             routing_key,
             url: url.unwrap_or_else(|| DEFAULT_EVENTS_URL.to_string()),
             client: reqwest::Client::new(),
+            templates: None,
         }
+    }
+
+    /// Uses `templates` for the parts they set; see [`crate::template`].
+    pub fn with_templates(mut self, templates: Option<Templates>) -> Self {
+        self.templates = templates;
+        self
     }
 
     /// PagerDuty has no `success` severity; a success signal is
@@ -61,8 +70,10 @@ impl PagerDutyProvider {
             details.insert("metadata".into(), signal.metadata.clone());
         }
 
+        let summary = template::render(&self.templates, "summary", signal, &[])
+            .unwrap_or_else(|| signal.title.clone());
         let mut payload = serde_json::json!({
-            "summary": truncate(&signal.title, MAX_SUMMARY_CHARS),
+            "summary": truncate(&summary, MAX_SUMMARY_CHARS),
             "source": signal.source,
             "severity": Self::severity_for(signal.severity),
             "timestamp": signal.timestamp.to_rfc3339(),
@@ -102,6 +113,13 @@ fn truncate(s: &str, max_chars: usize) -> String {
 impl Provider for PagerDutyProvider {
     fn name(&self) -> &'static str {
         "pagerduty"
+    }
+
+    /// The routing key is a credential, so it is left out.
+    fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
+        let mut event = self.event_for(signal);
+        event["routing_key"] = "<redacted>".into();
+        Some(event)
     }
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
@@ -281,5 +299,32 @@ mod tests {
             .await
             .expect_err("429 must fail so the retry loop backs off");
         assert!(err.to_string().contains("429"));
+    }
+
+    #[test]
+    fn summary_template_replaces_the_title_and_is_cut_to_fit() {
+        let provider = PagerDutyProvider::new("k".into(), None).with_templates(template::for_test(
+            "pagerduty",
+            &[("summary", "[{{ environment }}] {{ service }}: {{ title }}")],
+        ));
+        let event = provider.event_for(&signal(Severity::Error));
+        assert_eq!(
+            event["payload"]["summary"],
+            "[prod] orders: dbt model failed"
+        );
+
+        let long = PagerDutyProvider::new("k".into(), None).with_templates(template::for_test(
+            "pagerduty",
+            &[("summary", "{% for i in range(2000) %}x{% endfor %}")],
+        ));
+        let event = long.event_for(&signal(Severity::Error));
+        assert_eq!(
+            event["payload"]["summary"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_SUMMARY_CHARS
+        );
     }
 }

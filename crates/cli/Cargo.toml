@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 opssignal-core = { path = "../core", version = "=0.1.0" }
 clap = { version = "4", features = ["derive"] }
+serde_json = "1"
 
 [features]
 # The base CLI reads local files and https:// only. Each cloud is an
