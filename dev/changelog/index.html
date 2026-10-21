@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -919,6 +946,20 @@ the next tag.</p>
   Flushing (Python <code>atexit</code>, C <code>signal_flush</code>, Rust drop) sends open groups,
   and the new <code>opssignal notify-batch</code> sends newline-delimited JSON signals
   and their digests in one run. Groups are per process.</li>
+<li><strong>Acknowledge and resolve:</strong> a signal's new <code>action</code> (<code>trigger</code> by default,
+  <code>acknowledge</code>, <code>resolve</code>) acts on the alert its dedup key names. PagerDuty
+  acknowledges or resolves the incident, Opsgenie acknowledges or closes the
+  alert, Slack with the new <code>bot_token</code> and <code>channel</code> mode updates the
+  alert's message in place, and other providers that got the alert are sent
+  an "Acknowledged"/"Resolved" message. It goes to the providers that got the
+  alert (tracked in a new <code>alerts</code> table in the SQLite file), is never held
+  back by a route's <code>dedup</code> or <code>rate_limit</code>, and with no record of the alert
+  goes only to PagerDuty and Opsgenie, which resolve by key. Python gets
+  <code>acknowledge()</code>, <code>resolve()</code> and <code>notify(action=...)</code>, the CLI gets
+  <code>opssignal acknowledge</code> and <code>opssignal resolve</code>, C takes <code>"action"</code> in the
+  JSON, and the Airflow adapter gets <code>success_callback</code>, which resolves the
+  task's failure alert. Signal JSON input may now leave out any field;
+  validation reports the ones a signal needs.</li>
 </ul>
 <h2 id="100-beta2-2026-10-21"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2">1.0.0-beta.2</a> - 2026-10-21<a class="headerlink" href="#100-beta2-2026-10-21" title="Permanent link">&para;</a></h2>
 <p>Second beta: send one signal to several places at once, shape each

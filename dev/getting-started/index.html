@@ -504,6 +504,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -781,6 +808,9 @@ checkout with <code>uv sync --dev &amp;&amp; (cd python &amp;&amp; uv run --proj
     <span class="s2">"on_failure_callback"</span><span class="p">:</span> <span class="n">failure_callback</span><span class="p">,</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>Add <code>"on_success_callback": success_callback</code> (from the same module) to
+resolve the failure alert once the task succeeds; see
+<a href="../lifecycle/">Acknowledge and resolve</a>.</p>
 <p><code>notify()</code> also takes the rest of the signal's context as keyword arguments:
 <code>service</code>, <code>component</code>, <code>team</code>, <code>run_id</code>, <code>correlation_id</code>, <code>trace_id</code>,
 <code>log_url</code>, <code>dedup_key</code>, and <code>metadata</code> (any JSON-serialisable object, usually a

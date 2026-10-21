@@ -16,7 +16,7 @@
         <link rel="prev" href="../providers/">
       
       
-        <link rel="next" href="../kubernetes/">
+        <link rel="next" href="../lifecycle/">
       
       
         
@@ -570,6 +570,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -989,6 +1016,10 @@ side working whatever the text says.</p>
 <tr>
 <td><code>id</code>, <code>timestamp</code></td>
 <td>The signal id, and the time it was created as RFC 3339 in UTC.</td>
+</tr>
+<tr>
+<td><code>action</code></td>
+<td><code>trigger</code>, <code>acknowledge</code> or <code>resolve</code>; see <a href="../lifecycle/">Acknowledge and resolve</a>. Added in v1.0.0-beta.3.</td>
 </tr>
 </tbody>
 </table>

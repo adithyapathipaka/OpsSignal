@@ -411,6 +411,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -649,6 +676,10 @@ with this site:</p>
 <td>Blocking delivery with a timeout. Returns a <code>DeliveryResult</code>, whose <code>deliveries</code> lists each provider's outcome.</td>
 </tr>
 <tr>
+<td><code>signal::Action</code></td>
+<td>A signal's <code>action</code>: <code>Trigger</code> (default), <code>Acknowledge</code> or <code>Resolve</code>. Added in v1.0.0-beta.3.</td>
+</tr>
+<tr>
 <td><code>routing::DeliveryMode</code></td>
 <td>A route's <code>mode</code>: <code>Failover</code> (default) or <code>Fanout</code>.</td>
 </tr>
@@ -667,10 +698,13 @@ with this site:</p>
 </tbody>
 </table>
 <p>The Python API is <code>opssignal.notify()</code> and <code>opssignal.flush(timeout=5.0)</code>,
-plus the Airflow adapter; see <a href="../getting-started/">Getting started</a>. The
+plus the Airflow adapter; see <a href="../getting-started/">Getting started</a>.
+<code>opssignal.acknowledge()</code> and <code>opssignal.resolve()</code> (added in v1.0.0-beta.3)
+act on an alert raised earlier; see <a href="../lifecycle/">Acknowledge and resolve</a>. The
 package flushes on interpreter exit by itself.</p>
 <p>The C library exports <code>signal_notify_async(json)</code>, <code>signal_flush(timeout_ms)</code>
-and <code>signal_free_string(ptr)</code>. Call <code>signal_flush</code> before the host exits, or
+and <code>signal_free_string(ptr)</code>. The JSON may set <code>"action"</code> to <code>"acknowledge"</code>
+or <code>"resolve"</code> (added in v1.0.0-beta.3), with just a <code>dedup_key</code>. Call <code>signal_flush</code> before the host exits, or
 signals still being delivered are cut off (they stay recorded as <code>pending</code>).</p>
 
 

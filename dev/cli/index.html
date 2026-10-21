@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -537,6 +564,17 @@
     <span class="md-ellipsis">
       
         opssignal preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opssignal-resolve-and-opssignal-acknowledge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal resolve and opssignal acknowledge
       
     </span>
   </a>
@@ -741,6 +779,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-resolve-and-opssignal-acknowledge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal resolve and opssignal acknowledge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -891,6 +940,19 @@ nothing is recorded. Credentials in a payload, such as PagerDuty's
 <code>routing_key</code>, are shown as <code>&lt;redacted&gt;</code>. Email's payload is its subject and
 body. Exits <code>2</code> on bad input, a config that fails to load, or a <code>--provider</code>
 that isn't configured.</p>
+<h2 id="opssignal-resolve-and-opssignal-acknowledge"><code>opssignal resolve</code> and <code>opssignal acknowledge</code><a class="headerlink" href="#opssignal-resolve-and-opssignal-acknowledge" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>Resolve or acknowledge an alert raised earlier. See
+<a href="../lifecycle/">Acknowledge and resolve</a>.</p>
+</div>
+<div class="highlight"><pre><span></span><code>opssignal<span class="w"> </span>resolve<span class="w"> </span>--dedup-key<span class="w"> </span>etl:nightly<span class="w"> </span>--message<span class="w"> </span><span class="s2">"Backfilled"</span>
+</code></pre></div>
+<p>Name the alert with <code>--dedup-key</code>, or with the <code>--source</code>, <code>--event-type</code>,
+<code>--title</code> and <code>--environment</code> it was raised with. <code>--message</code> adds a note.
+The command waits for delivery like <code>notify</code> and uses the same exit codes.
+When there is no open alert to act on and no route to PagerDuty or Opsgenie,
+nothing is sent: stderr shows <code>skipped: ...</code> and the exit code is <code>0</code>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -902,7 +964,7 @@ that isn't configured.</p>
 <tbody>
 <tr>
 <td><code>0</code></td>
-<td>Delivered, or held back by a route's <a href="../configuration/#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a> (stderr then shows <code>suppressed: ...</code> with the reason). A signal held for a <a href="../configuration/#grouping-and-digests">digest</a> counts by how the digest went.</td>
+<td>Delivered, or held back by a route's <a href="../configuration/#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a> (stderr then shows <code>suppressed: ...</code> with the reason), or an acknowledge or resolve with nothing to act on (<code>skipped: ...</code>). A signal held for a <a href="../configuration/#grouping-and-digests">digest</a> counts by how the digest went.</td>
 </tr>
 <tr>
 <td><code>1</code></td>

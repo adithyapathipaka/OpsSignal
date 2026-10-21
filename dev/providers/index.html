@@ -554,6 +554,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -873,8 +900,8 @@ the file with <code>${VAR}</code> or a secret reference such as <code>${aws-sm:p
 <tr>
 <td><a href="#slack">Slack</a></td>
 <td><code>slack</code></td>
-<td><code>webhook_url</code></td>
-<td>none</td>
+<td><code>webhook_url</code>, or <code>bot_token</code> and <code>channel</code></td>
+<td><code>api_url</code></td>
 </tr>
 <tr>
 <td><a href="#webhook">Webhook</a></td>
@@ -935,6 +962,22 @@ unmatched signals fall back to it, and cannot be turned off.</p>
 </code></pre></div>
 <p>Posts the title, message and a severity emoji to a Slack
 <a href="https://api.slack.com/messaging/webhooks">incoming webhook</a>.</p>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>Slack can post through the Web API with a bot token instead, so that
+<a href="../lifecycle/">acknowledging and resolving</a> the alert updates its message
+in place.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">bot_token</span><span class="p">:</span><span class="w"> </span><span class="s">"${SLACK_BOT_TOKEN}"</span><span class="w">   </span><span class="c1"># xoxb-..., with the chat:write scope</span>
+<span class="w">    </span><span class="nt">channel</span><span class="p">:</span><span class="w"> </span><span class="s">"#data-alerts"</span><span class="w">           </span><span class="c1"># or a channel ID; invite the bot to it</span>
+</code></pre></div>
+<p>Set exactly one of <code>webhook_url</code> and <code>bot_token</code>. With <code>bot_token</code>, the
+message is sent with <code>chat.postMessage</code> and an acknowledge or resolve edits it
+with <code>chat.update</code>. A webhook can't edit what it posted, so through a webhook
+an acknowledge or resolve is posted as a new message. <code>api_url</code> defaults to
+<code>https://slack.com/api</code>.</p>
 <h2 id="webhook">Webhook<a class="headerlink" href="#webhook" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">webhook</span><span class="p">:</span>
@@ -1012,8 +1055,13 @@ PagerDuty service (Service &gt; Integrations &gt; Add integration). <code>url</c
 </tbody>
 </table>
 <p>Because the dedup key is stable, the same failure sent again adds to the open
-alert instead of paging a second time. OpsSignal only triggers alerts; it
-does not acknowledge or resolve them.</p>
+alert instead of paging a second time.</p>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>An <code>acknowledge</code> or <code>resolve</code> signal with the same dedup key acknowledges
+or resolves the incident; the event carries only <code>routing_key</code>,
+<code>event_action</code> and <code>dedup_key</code>. See <a href="../lifecycle/">Acknowledge and resolve</a>.</p>
+</div>
 <p>Route only the severities that should wake someone to PagerDuty. A route that
 sends <code>info</code> signals there will page on them.</p>
 <h2 id="microsoft-teams">Microsoft Teams<a class="headerlink" href="#microsoft-teams" title="Permanent link">&para;</a></h2>
@@ -1104,8 +1152,15 @@ defaults to <code>https://api.opsgenie.com/v2/alerts</code>.</p>
 </tbody>
 </table>
 <p>Because the alias is stable, the same failure sent again raises the open
-alert's count instead of opening a second alert. OpsSignal only creates
-alerts; it does not acknowledge or close them.</p>
+alert's count instead of opening a second alert.</p>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>An <code>acknowledge</code> or <code>resolve</code> signal with the same dedup key acknowledges
+or closes the alert with that alias (<code>POST .../alerts/{alias}/acknowledge</code>
+or <code>/close</code> with <code>identifierType=alias</code>), with the signal's message, or its
+title, as the note. A 404, meaning no alert has that alias, counts as done.
+See <a href="../lifecycle/">Acknowledge and resolve</a>.</p>
+</div>
 <p>Atlassian is folding Opsgenie into Jira Service Management. Its operations
 alert API takes the same request, so a migrated team can point <code>url</code> at the
 endpoint shown on its JSM API integration and keep the rest of the config.</p>

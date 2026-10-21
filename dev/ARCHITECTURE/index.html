@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acknowledge and resolve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../kubernetes/" class="md-nav__link">
         
   
@@ -1087,6 +1114,10 @@ OSS users already populate.</p>
   since SQLite's single-writer model will start serializing writes under
   concurrent load.</li>
 </ul>
+<p>Two other tables live in the same SQLite file, owned by the core rather
+than the sink: <code>throttle</code> (route <code>dedup</code> and <code>rate_limit</code> history) and
+<code>alerts</code> (which providers hold an open alert for each dedup key, so an
+<code>acknowledge</code> or <code>resolve</code> goes back to them; see <code>lifecycle.rs</code>).</p>
 <h2 id="routing">Routing<a class="headerlink" href="#routing" title="Permanent link">&para;</a></h2>
 <p>Routing config matches signals against rules and resolves to a list of
 provider names.</p>

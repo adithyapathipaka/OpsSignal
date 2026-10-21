@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SlackProvider"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_API_URL"],"struct":["SlackProvider"]};
