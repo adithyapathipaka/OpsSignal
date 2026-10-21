@@ -4,11 +4,17 @@ A Rust-powered SDK for turning application and workflow events into structured,
 routed operational notifications: Slack, webhooks, and more, from a single
 event model.
 
-!!! warning "Status: early alpha (v0.1 in progress)"
-    The one real, tested integration target today is **Airflow**, via the
-    Python bindings. The CLI and a C ABI (for future Java/Go bindings) exist
-    but are young. Treat this as an Airflow/dbt-shop tool for now, not yet the
-    generic "any backend application" SDK it aims to become.
+!!! warning "Status: beta (latest release v1.0.0-beta.1)"
+    Config keys, the Python API and the SQLite schema may still change before
+    1.0.0. The most-tested integration targets are **Airflow** and **dbt**,
+    via the Python bindings. The CLI and a C ABI (for future Java/Go
+    bindings) exist but are young.
+
+!!! info "Which release has which feature"
+    These pages describe the current `main` branch. Everything shipped in
+    v1.0.0-beta.1 unless the section says otherwise: features added later
+    carry an **"Added in"** note naming the release that brings them.
+    See [Releases](changelog.md) for what changed in each version.
 
 ## What it does
 
@@ -44,16 +50,16 @@ notifications.
 - [CLI](cli.md): flags and exit codes for shell and CI use.
 - [Architecture](ARCHITECTURE.md): components, delivery semantics, design rules.
 - [API reference](reference.md): generated Rust docs for `opssignal-core`.
+- [Releases](changelog.md): what changed in each version.
 
 ## Roadmap
 
-| Version | Scope |
+| Release | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI |
-| v0.2 | Dedup, retry/backoff tuning, Alertmanager provider |
-| v0.3 | Postgres sink |
-| v0.4 | Dagster + Prefect adapters |
-| v0.5+ | Java/Go bindings, only if real external demand appears |
+| v1.0.0-beta.1 (released) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI, C ABI |
+| Next beta | Fan-out delivery mode for routes |
+| Later | Dedup, retry/backoff tuning, Alertmanager provider; Postgres sink; Dagster + Prefect adapters |
+| Only on demand | Java/Go bindings, only if real external demand appears |
 
 ## License
 

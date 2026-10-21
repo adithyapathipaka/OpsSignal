@@ -33,6 +33,7 @@ nav:
   - Kubernetes: kubernetes.md
   - CLI: cli.md
   - Architecture: ARCHITECTURE.md
+  - Releases: changelog.md
   - Releasing: releasing.md
   - API reference: reference.md
 
@@ -44,6 +45,9 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

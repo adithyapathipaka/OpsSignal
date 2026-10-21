@@ -77,7 +77,13 @@ crates.io only allows trusted publishing for crates that already exist.
 
 ## Cutting a release
 
-1. Tag the commit on `main` you want to release and push the tag:
+1. Open a PR that turns `## [Unreleased]` in `CHANGELOG.md` into
+   `## [X.Y.Z] - YYYY-MM-DD`, adds a fresh empty `## [Unreleased]` above
+   it, updates the compare links at the bottom, and checks that every
+   "Added in" note in `docs/` names this version. Merge it, so the tagged
+   commit's docs and changelog match the release.
+
+2. Tag the commit on `main` you want to release and push the tag:
 
     ```bash
     git tag v0.2.0
@@ -104,7 +110,7 @@ crates.io only allows trusted publishing for crates that already exist.
     keep their old version, so `main` doesn't show which version was last
     released; the tags do.
 
-2. Approve the `pypi-aws`, `pypi-gcp`, `pypi-azure`, `pypi` and
+3. Approve the `pypi-aws`, `pypi-gcp`, `pypi-azure`, `pypi` and
    `crates-io` deployments in the Actions run.
 
 The run uploads the three add-ons first, then `opssignal` (its extras pin
