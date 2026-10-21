@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["opssignal_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"enum\" href=\"opssignal_core/source/enum.ConfigSource.html\" title=\"enum opssignal_core::source::ConfigSource\">ConfigSource</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"enum\" href=\"opssignal_core/delivery/enum.DeliveryStatus.html\" title=\"enum opssignal_core::delivery::DeliveryStatus\">DeliveryStatus</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"enum\" href=\"opssignal_core/signal/enum.Severity.html\" title=\"enum opssignal_core::signal::Severity\">Severity</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"enum\" href=\"opssignal_core/config/enum.SinkKind.html\" title=\"enum opssignal_core::config::SinkKind\">SinkKind</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"enum\" href=\"opssignal_core/config/enum.SmtpTls.html\" title=\"enum opssignal_core::config::SmtpTls\">SmtpTls</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"opssignal_core/config/struct.StorageConfig.html\" title=\"struct opssignal_core::config::StorageConfig\">StorageConfig</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1662]}

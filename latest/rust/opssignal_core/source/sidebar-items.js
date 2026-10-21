@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CACHE_DIR_ENV_VAR","CLOUD_SCHEMES","DEFAULT_REFRESH","REFRESH_ENV_VAR"],"enum":["ConfigSource"],"fn":["fetch_blocking","register_cloud_fetcher","register_fetcher"],"struct":["LoadOptions"],"trait":["ExternalFetcher"]};

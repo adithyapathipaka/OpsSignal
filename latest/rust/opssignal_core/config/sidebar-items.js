@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONFIG_ENV_VAR","DEFAULT_CONFIG_FILE","DEFAULT_SQLITE_PATH"],"enum":["EmailTransport","SinkKind","SmtpTls"],"struct":["Config","ConsoleConfig","EmailConfig","Layer","OpsgenieConfig","PagerDutyConfig","ProvidersConfig","SesConfig","SlackConfig","SmtpConfig","StorageConfig","TeamsConfig","WebhookConfig"]};
