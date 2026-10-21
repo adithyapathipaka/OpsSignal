@@ -95,6 +95,12 @@ crates.io only allows trusted publishing for crates that already exist.
    "Added in" note in `docs/` names this version. Merge it, so the tagged
    commit's docs and changelog match the release.
 
+   That section becomes the GitHub release notes: the workflow runs
+   `scripts/release_notes.py`, which adds install commands, the docs link
+   and a compare link to the previous tag. Write it for users (what they
+   get, what changed, what to watch for), not as a list of PRs. A tag
+   with no matching `## [X.Y.Z]` section stops the run before it builds.
+
 2. Tag the commit on `main` you want to release and push the tag:
 
     ```bash
