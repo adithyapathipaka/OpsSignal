@@ -36,6 +36,7 @@ nav:
   - Configuration: configuration.md
   - Providers: providers.md
   - Message templates: templates.md
+  - Acknowledge and resolve: lifecycle.md
   - Kubernetes: kubernetes.md
   - CLI: cli.md
   - Architecture: ARCHITECTURE.md

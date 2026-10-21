@@ -12,7 +12,7 @@ import typing
 from pathlib import Path
 
 import pytest
-from opssignal import flush, notify
+from opssignal import acknowledge, flush, notify, resolve
 
 
 def _db_path() -> Path:
@@ -355,3 +355,25 @@ def test_provider_template_shapes_the_message(tmp_path):
         server.shutdown()
     assert result.returncode == 0, result.stderr
     assert _BodyHook.bodies == [{"text": ":x: load failed (dag orders)"}]
+
+
+def test_resolve_by_key_reaches_the_provider_that_got_the_alert():
+    title = f"lifecycle check {time.time_ns()}"
+    key = f"pytest:{time.time_ns()}"
+    notify(source="pytest", event_type="check", title=title, severity="error", dedup_key=key)
+    assert flush(5.0)
+
+    # No title given: the resolve takes the alert's.
+    acknowledge(key)
+    resolve(key, message="fixed")
+    assert flush(5.0)
+    assert sorted(_rows_titled(title)) == [
+        ("opssignal", "info", "delivered", "console"),
+        ("opssignal", "info", "delivered", "console"),
+        ("pytest", "error", "delivered", "console"),
+    ]
+
+    # Nothing open any more, and console doesn't resolve by key.
+    resolve(key)
+    assert flush(5.0)
+    assert len(_rows_titled(title)) == 3

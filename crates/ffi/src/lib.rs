@@ -209,6 +209,18 @@ mod tests {
     }
 
     #[test]
+    fn unknown_action_in_json_is_an_error() {
+        let payload = br#"{"dedup_key":"k","action":"close"}"#;
+        assert!(take_error(notify(payload)).contains("invalid signal JSON"));
+    }
+
+    #[test]
+    fn resolve_without_a_key_needs_the_alert_fields() {
+        let payload = br#"{"action":"resolve"}"#;
+        assert!(take_error(notify(payload)).contains("must not be empty"));
+    }
+
+    #[test]
     fn freeing_a_null_string_is_a_no_op() {
         unsafe { signal_free_string(std::ptr::null_mut()) };
     }
@@ -235,6 +247,9 @@ mod tests {
 
         assert!(result.success);
         assert!(result.error.is_null());
+        // An acknowledge or resolve may name its alert by key alone.
+        let resolve = br#"{"dedup_key":"k","action":"resolve"}"#;
+        assert!(notify(resolve).success);
         assert!(signal_flush(5_000).success);
     }
 }

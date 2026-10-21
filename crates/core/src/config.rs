@@ -193,7 +193,21 @@ pub struct ConsoleConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlackConfig {
-    pub webhook_url: String,
+    /// Incoming webhook URL. Exactly one of `webhook_url` and
+    /// `bot_token`.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// Bot token (`xoxb-...`) with `chat:write`, to post through the Web
+    /// API, which lets `acknowledge` and `resolve` update the alert's
+    /// message in place. Needs `channel`. Added in v1.0.0-beta.3.
+    #[serde(default)]
+    pub bot_token: Option<String>,
+    /// Channel ID or `#name` the bot posts to; it must be a member.
+    #[serde(default)]
+    pub channel: Option<String>,
+    /// Web API base URL; defaults to `https://slack.com/api`.
+    #[serde(default)]
+    pub api_url: Option<String>,
     /// Replaces parts of the message; see [`crate::template`].
     #[serde(default)]
     pub template: TemplateConfig,
@@ -274,6 +288,26 @@ pub struct EmailConfig {
     /// Replaces parts of the message; see [`crate::template`].
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
+}
+
+impl SlackConfig {
+    fn check(&self) -> Result<(), SignalError> {
+        match (&self.webhook_url, &self.bot_token, &self.channel) {
+            (Some(_), None, None) | (None, Some(_), Some(_)) => Ok(()),
+            (Some(_), Some(_), _) => Err(config_err(
+                "providers.slack: set webhook_url or bot_token, not both",
+            )),
+            (None, Some(_), None) => Err(config_err(
+                "providers.slack.bot_token needs a channel to post to",
+            )),
+            (Some(_), None, Some(_)) => Err(config_err(
+                "providers.slack.channel is used only with bot_token; a webhook posts to its own channel",
+            )),
+            (None, None, _) => Err(config_err(
+                "providers.slack needs webhook_url or bot_token",
+            )),
+        }
+    }
 }
 
 /// How an [`EmailConfig`] sends.
@@ -464,6 +498,9 @@ impl Config {
         }
         if let Some(email) = &config.providers.email {
             email.check()?;
+        }
+        if let Some(slack) = &config.providers.slack {
+            slack.check()?;
         }
         config.providers.check_templates()?;
         config.check_routes(&origins)?;
@@ -663,7 +700,7 @@ mod tests {
                 .providers
                 .slack
                 .as_ref()
-                .map(|s| s.webhook_url.as_str()),
+                .and_then(|s| s.webhook_url.as_deref()),
             Some("https://hooks.example.test/abc")
         );
         assert_eq!(config.routes.len(), 2);
@@ -1080,7 +1117,10 @@ providers:
 "#;
         let config = Config::from_yaml_str(yaml).expect("templates parse");
         let slack = config.providers.slack.expect("slack");
-        assert_eq!(slack.webhook_url, "https://hooks.example.test/t");
+        assert_eq!(
+            slack.webhook_url.as_deref(),
+            Some("https://hooks.example.test/t")
+        );
         assert!(slack.template["text"].starts_with("{{ emoji }} *{{ title }}*"));
         assert_eq!(
             config.providers.pagerduty.expect("pd").template["summary"],
@@ -1123,7 +1163,38 @@ providers:
             Config::from_layers([(Some("base".into()), base), (Some("team".into()), team)])
                 .expect("merged");
         let slack = config.providers.slack.expect("slack");
-        assert_eq!(slack.webhook_url, "https://hooks.example.test/data");
+        assert_eq!(
+            slack.webhook_url.as_deref(),
+            Some("https://hooks.example.test/data")
+        );
         assert_eq!(slack.template["text"], "[data] {{ title }}");
+    }
+
+    #[test]
+    fn slack_takes_a_webhook_or_a_bot_token_with_a_channel() {
+        let bot = Config::from_yaml_str(
+            "providers:\n  slack:\n    bot_token: xoxb-1\n    channel: \"#alerts\"\n",
+        )
+        .expect("bot mode");
+        assert_eq!(
+            bot.providers.slack.unwrap().bot_token.as_deref(),
+            Some("xoxb-1")
+        );
+        for (yaml, says) in [
+            ("bot_token: x", "needs a channel"),
+            (
+                "webhook_url: https://h.test/x\n    bot_token: x\n    channel: c",
+                "not both",
+            ),
+            (
+                "webhook_url: https://h.test/x\n    channel: c",
+                "only with bot_token",
+            ),
+            ("channel: c", "needs webhook_url or bot_token"),
+        ] {
+            let err = Config::from_yaml_str(&format!("providers:\n  slack:\n    {yaml}\n"))
+                .expect_err(yaml);
+            assert!(err.to_string().contains(says), "{err}");
+        }
     }
 }

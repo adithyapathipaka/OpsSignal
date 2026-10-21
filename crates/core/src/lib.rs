@@ -7,6 +7,7 @@ pub mod config;
 pub mod delivery;
 pub mod group;
 mod inflight;
+mod lifecycle;
 pub mod providers;
 mod reload;
 pub mod routing;
@@ -28,6 +29,7 @@ use config::{Config, SinkKind};
 use delivery::{DeliveryResult, DeliveryStatus, Provider, ProviderOutcome};
 use group::{Added, Closed, Groups, Member};
 use inflight::InFlight;
+use lifecycle::{AlertBook, OpenAlert};
 use providers::{
     console::ConsoleProvider, email::EmailProvider, opsgenie::OpsgenieProvider,
     pagerduty::PagerDutyProvider, slack::SlackProvider, teams::TeamsProvider,
@@ -76,8 +78,15 @@ impl Pipeline {
             providers.insert(
                 "slack".to_string(),
                 Arc::new(
-                    SlackProvider::new(slack.webhook_url.clone())
-                        .with_templates(template::Templates::load("slack", &slack.template)),
+                    match (&slack.webhook_url, &slack.bot_token, &slack.channel) {
+                        (_, Some(token), Some(channel)) => SlackProvider::with_bot(
+                            token.clone(),
+                            channel.clone(),
+                            slack.api_url.clone(),
+                        ),
+                        (url, _, _) => SlackProvider::new(url.clone().unwrap_or_default()),
+                    }
+                    .with_templates(template::Templates::load("slack", &slack.template)),
                 ),
             );
         }
@@ -200,6 +209,10 @@ pub struct SignalClient {
     /// Route `dedup` and `rate_limit` history. `None` if its table
     /// could not be opened; routes then send without throttling.
     throttle: Option<Arc<Throttle>>,
+    /// Which providers hold an open alert for each dedup key. `None` if
+    /// its table could not be opened; an `acknowledge` or `resolve` then
+    /// goes only to providers that resolve by key.
+    alerts: Option<Arc<AlertBook>>,
     in_flight: Arc<InFlight>,
     /// Signals held by routes that set `group_by` or `group_wait`.
     groups: Arc<Groups>,
@@ -272,11 +285,21 @@ impl SignalClient {
                 None
             }
         };
+        let alerts = match AlertBook::open(&config.storage.path) {
+            Ok(book) => Some(Arc::new(book)),
+            Err(e) => {
+                tracing::error!(
+                    "{e}; acknowledge and resolve go only to providers that resolve by key"
+                );
+                None
+            }
+        };
         let in_flight: Arc<InFlight> = Arc::default();
         Ok(SignalClient {
             sink,
             pipeline: Arc::new(RwLock::new(Arc::new(Pipeline::from_config(config)))),
             throttle,
+            alerts,
             groups: Arc::new(Groups::new(Arc::clone(&in_flight))),
             in_flight,
             runtime,
@@ -297,29 +320,36 @@ impl SignalClient {
             tracing::warn!("signal validation failed, dropping: {e}");
             return;
         }
-        let signal = Signal::from_input(input);
+        let pipeline = self.pipeline();
+        // Also on the caller's thread, so dedup sees signals in the
+        // order they were sent.
+        let Prepared {
+            signal,
+            plan,
+            mut admission,
+            prior_refs,
+        } = self.prepare(input, &pipeline);
         // On the caller's thread, so the signal is on disk before this
         // returns even if the process exits right after.
         record(self.sink.as_ref(), &signal);
         let sink = Arc::clone(&self.sink);
-        let pipeline = self.pipeline();
-        // Also on the caller's thread, so dedup sees signals in the
-        // order they were sent.
-        let (plan, mut admission) =
-            plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
         if plan.targets.is_empty() {
             self.settle_unsent(&pipeline, &plan, signal, &mut admission);
             return;
         }
         self.hold(&pipeline, &plan, &signal, &mut admission, false);
         let throttle = self.throttle.clone();
+        let alerts = self.alerts.clone();
         let guard = self.in_flight.start();
 
         self.runtime.spawn(async move {
             let _guard = guard;
-            let tracker = Tracker::new(&signal, sink.as_ref());
+            let tracker = Tracker::new(&signal, sink.as_ref(), prior_refs);
             let result = deliver(&tracker, &plan, &pipeline.providers).await;
             settle(throttle.as_deref(), &admission, &result);
+            if let Some(alerts) = &alerts {
+                alerts.record(&signal, &result, &tracker.refs());
+            }
             if let Err(e) = sink.complete(&signal, &result) {
                 tracing::error!("sink write failed: {e}");
             }
@@ -449,16 +479,19 @@ impl SignalClient {
         timeout: Duration,
     ) -> Result<DeliveryResult, SignalError> {
         signal::validate(&input)?;
-        let signal = Signal::from_input(input);
-        record(self.sink.as_ref(), &signal);
         let pipeline = self.pipeline();
-        let (plan, mut admission) =
-            plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+        let Prepared {
+            signal,
+            plan,
+            mut admission,
+            prior_refs,
+        } = self.prepare(input, &pipeline);
+        record(self.sink.as_ref(), &signal);
         if plan.targets.is_empty() {
             return Ok(self.settle_unsent(&pipeline, &plan, signal, &mut admission));
         }
         self.hold(&pipeline, &plan, &signal, &mut admission, false);
-        let tracker = Tracker::new(&signal, self.sink.as_ref());
+        let tracker = Tracker::new(&signal, self.sink.as_ref(), prior_refs);
 
         let result = self.runtime.block_on(async {
             match tokio::time::timeout(timeout, deliver(&tracker, &plan, &pipeline.providers)).await
@@ -472,9 +505,105 @@ impl SignalClient {
             }
         });
         settle(self.throttle.as_deref(), &admission, &result);
+        if let Some(alerts) = &self.alerts {
+            alerts.record(&signal, &result, &tracker.refs());
+        }
 
         self.sink.complete(&signal, &result)?;
         Ok(result)
+    }
+
+    /// Stamps a validated input and plans its delivery. A trigger goes
+    /// through the routes, held back by their `dedup` and `rate_limit`.
+    /// An `acknowledge` or `resolve` goes to the providers holding its
+    /// alert instead (see [`lifecycle_plan`]); routes don't throttle it,
+    /// since holding back a resolve would leave the alert open.
+    fn prepare(&self, mut input: SignalInput, pipeline: &Pipeline) -> Prepared {
+        if !input.action.is_lifecycle() {
+            let signal = Signal::from_input(input);
+            let (plan, admission) =
+                plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+            return Prepared {
+                signal,
+                plan,
+                admission,
+                prior_refs: HashMap::new(),
+            };
+        }
+        let open = match &self.alerts {
+            Some(alerts) => alerts.open_alerts(&input.effective_dedup_key()),
+            None => Vec::new(),
+        };
+        input.fill_lifecycle_defaults(open.first().map(|a| a.title.as_str()));
+        let signal = Signal::from_input(input);
+        let plan = lifecycle_plan(pipeline, &signal, &open);
+        for line in &plan.suppressed {
+            tracing::info!("signal {} skipped: {line}", signal.id);
+        }
+        let prior_refs = open
+            .into_iter()
+            .filter_map(|a| Some((a.provider, a.alert_ref?)))
+            .collect();
+        Prepared {
+            signal,
+            plan,
+            admission: Admission::default(),
+            prior_refs,
+        }
+    }
+}
+
+/// A signal ready to deliver.
+struct Prepared {
+    signal: Signal,
+    plan: DeliveryPlan,
+    admission: Admission,
+    /// Each provider's reference to the alert an `acknowledge` or
+    /// `resolve` acts on.
+    prior_refs: HashMap<String, String>,
+}
+
+/// Where an `acknowledge` or `resolve` goes: every provider holding its
+/// alert, each on its own. With no record of the alert (another host
+/// raised it, or it was resolved already), the providers that resolve
+/// by key on routes matching the signal whatever its severity; those
+/// ignore a key they have no open alert for. Message providers are left
+/// out then, so a success callback that runs after every task doesn't
+/// post "resolved" for alerts that never fired. With neither, nothing
+/// is sent and the signal is `skipped`.
+fn lifecycle_plan(pipeline: &Pipeline, signal: &Signal, open: &[OpenAlert]) -> DeliveryPlan {
+    let mut targets: Vec<Vec<String>> = open
+        .iter()
+        .filter(|a| pipeline.providers.contains_key(&a.provider))
+        .map(|a| vec![a.provider.clone()])
+        .collect();
+    if targets.is_empty() {
+        targets = pipeline
+            .routing
+            .providers_any_severity(signal)
+            .into_iter()
+            .filter(|name| {
+                pipeline
+                    .providers
+                    .get(name)
+                    .is_some_and(|p| p.resolves_by_key())
+            })
+            .map(|name| vec![name])
+            .collect();
+    }
+    let suppressed = if targets.is_empty() {
+        vec![format!(
+            "no open alert with dedup key {} to {}, and no route to a provider that resolves by key",
+            signal.dedup_key.as_deref().unwrap_or_default(),
+            signal.action
+        )]
+    } else {
+        Vec::new()
+    };
+    DeliveryPlan {
+        targets,
+        suppressed,
+        grouped: Vec::new(),
     }
 }
 
@@ -564,7 +693,7 @@ impl GroupSender {
         };
 
         let pipeline = current(&self.pipeline);
-        let tracker = Tracker::new(&signal, sink);
+        let tracker = Tracker::new(&signal, sink, HashMap::new());
         let result = deliver(&tracker, &plan, &pipeline.providers).await;
         settle(self.throttle.as_deref(), &admission, &result);
         for member in &closed.members {
@@ -607,15 +736,36 @@ struct Tracker<'a> {
     signal: &'a Signal,
     sink: &'a dyn SignalSink,
     outcomes: Mutex<Vec<ProviderOutcome>>,
+    /// What each provider returned for the alert this signal acts on.
+    prior_refs: HashMap<String, String>,
+    /// What each provider returned for this delivery.
+    refs: Mutex<HashMap<String, String>>,
 }
 
 impl<'a> Tracker<'a> {
-    fn new(signal: &'a Signal, sink: &'a dyn SignalSink) -> Self {
+    fn new(
+        signal: &'a Signal,
+        sink: &'a dyn SignalSink,
+        prior_refs: HashMap<String, String>,
+    ) -> Self {
         Tracker {
             signal,
             sink,
             outcomes: Mutex::default(),
+            prior_refs,
+            refs: Mutex::default(),
         }
+    }
+
+    fn keep_ref(&self, provider: &str, alert_ref: String) {
+        self.refs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(provider.to_string(), alert_ref);
+    }
+
+    fn refs(&self) -> HashMap<String, String> {
+        self.refs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn report(&self, outcome: ProviderOutcome) {
@@ -676,8 +826,12 @@ async fn deliver_chain(
         // Basic retry: exponential backoff up to MAX_RETRY_ATTEMPTS.
         // v0.2 roadmap item: add jitter, make configurable per-route.
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            match provider.send(tracker.signal).await {
-                Ok(()) => {
+            let prior = tracker.prior_refs.get(name).map(String::as_str);
+            match provider.send_with_ref(tracker.signal, prior).await {
+                Ok(alert_ref) => {
+                    if let Some(alert_ref) = alert_ref {
+                        tracker.keep_ref(name, alert_ref);
+                    }
                     tracker.report(outcome(DeliveryStatus::Delivered, None, attempt));
                     return;
                 }
@@ -960,7 +1114,7 @@ mod tests {
         providers: &HashMap<String, Arc<dyn Provider>>,
     ) -> DeliveryResult {
         let signal = signal();
-        let tracker = Tracker::new(&signal, &NoSink);
+        let tracker = Tracker::new(&signal, &NoSink, HashMap::new());
         deliver(&tracker, &routing.plan(&signal), providers).await
     }
 
@@ -1327,6 +1481,7 @@ mod tests {
                 providers: registry(providers),
             }))),
             throttle: Some(Arc::new(Throttle::open(db).expect("open throttle"))),
+            alerts: Some(Arc::new(AlertBook::open(db).expect("open alerts"))),
             groups: Arc::new(Groups::new(Arc::clone(&in_flight))),
             in_flight,
             runtime: tokio::runtime::Builder::new_multi_thread()
@@ -1335,6 +1490,194 @@ mod tests {
                 .build()
                 .expect("runtime"),
         }
+    }
+
+    /// Records each send's action and the alert reference it was given;
+    /// returns `<name>-ref` for a trigger.
+    struct LifecycleProvider {
+        name: &'static str,
+        keyed: bool,
+        calls: Mutex<Vec<(signal::Action, Option<String>)>>,
+    }
+
+    impl LifecycleProvider {
+        fn new(name: &'static str, keyed: bool) -> Arc<Self> {
+            Arc::new(LifecycleProvider {
+                name,
+                keyed,
+                calls: Mutex::default(),
+            })
+        }
+
+        fn calls(&self) -> Vec<(signal::Action, Option<String>)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for LifecycleProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn resolves_by_key(&self) -> bool {
+            self.keyed
+        }
+
+        async fn send(&self, _signal: &Signal) -> Result<(), SignalError> {
+            unreachable!("the core calls send_with_ref")
+        }
+
+        async fn send_with_ref(
+            &self,
+            signal: &Signal,
+            alert_ref: Option<&str>,
+        ) -> Result<Option<String>, SignalError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((signal.action, alert_ref.map(str::to_string)));
+            Ok((!signal.action.is_lifecycle()).then(|| format!("{}-ref", self.name)))
+        }
+    }
+
+    fn lifecycle_input(action: signal::Action) -> SignalInput {
+        SignalInput {
+            dedup_key: Some("airflow:etl.load".into()),
+            action,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_goes_to_the_providers_holding_the_alert_with_their_refs() {
+        use signal::Action;
+        let db = temp_db();
+        let chat = LifecycleProvider::new("chat", false);
+        let pager = LifecycleProvider::new("pager", true);
+        let other = LifecycleProvider::new("other", false);
+        let client = client_with_routing(
+            vec![chat.clone(), pager.clone(), other.clone()],
+            fanout_to(&["chat", "pager"]),
+            &db,
+        );
+        let mut trigger = input(Severity::Error);
+        trigger.dedup_key = Some("airflow:etl.load".into());
+        let raised = client
+            .notify_sync(trigger, Duration::from_secs(5))
+            .expect("trigger");
+        assert_eq!(raised.status, DeliveryStatus::Delivered);
+
+        let ack = client
+            .notify_sync(lifecycle_input(Action::Acknowledge), Duration::from_secs(5))
+            .expect("acknowledge");
+        assert_eq!(ack.status, DeliveryStatus::Delivered);
+        let resolved = client
+            .notify_sync(lifecycle_input(Action::Resolve), Duration::from_secs(5))
+            .expect("resolve");
+        assert_eq!(resolved.status, DeliveryStatus::Delivered);
+        assert_eq!(resolved.provider.as_deref(), Some("chat,pager"));
+
+        assert_eq!(
+            chat.calls(),
+            vec![
+                (Action::Trigger, None),
+                (Action::Acknowledge, Some("chat-ref".into())),
+                (Action::Resolve, Some("chat-ref".into())),
+            ]
+        );
+        assert_eq!(pager.calls().len(), 3);
+        assert!(other.calls().is_empty());
+
+        // Resolved already: only the provider that resolves by key hears
+        // of it again, and it ignores a key with nothing open.
+        let again = client
+            .notify_sync(lifecycle_input(Action::Resolve), Duration::from_secs(5))
+            .expect("resolve again");
+        assert_eq!(again.provider.as_deref(), Some("pager"));
+        assert_eq!(chat.calls().len(), 3);
+
+        // The resolve took the alert's title, since it gave none.
+        let conn = rusqlite::Connection::open(&db).expect("open db");
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM signals WHERE payload_json LIKE '%\"action\":\"resolve\"%' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("resolve recorded");
+        assert_eq!(title, "dbt model failed");
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn resolve_with_no_record_goes_only_to_providers_that_resolve_by_key() {
+        use signal::Action;
+        let db = temp_db();
+        let chat = LifecycleProvider::new("chat", false);
+        let pager = LifecycleProvider::new("pager", true);
+        // The route matches errors only; the resolve is info, and still
+        // reaches pager: the alert it closes may have had any severity.
+        let mut routing = fanout_to(&["chat", "pager"]);
+        routing.routes[0].match_rule.severity = vec![Severity::Error];
+        let client = client_with_routing(vec![chat.clone(), pager.clone()], routing, &db);
+
+        let result = client
+            .notify_sync(lifecycle_input(Action::Resolve), Duration::from_secs(5))
+            .expect("resolve");
+        assert_eq!(result.status, DeliveryStatus::Delivered);
+        assert_eq!(result.provider.as_deref(), Some("pager"));
+        assert!(chat.calls().is_empty());
+        assert_eq!(pager.calls(), vec![(Action::Resolve, None)]);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn resolve_with_nowhere_to_go_is_skipped_not_sent_to_console() {
+        let db = temp_db();
+        let chat = LifecycleProvider::new("chat", false);
+        let client = client_with(vec![chat.clone()], &["chat"], &db);
+
+        let result = client
+            .notify_sync(
+                lifecycle_input(signal::Action::Resolve),
+                Duration::from_secs(5),
+            )
+            .expect("resolve");
+        assert_eq!(result.status, DeliveryStatus::Skipped);
+        assert!(result.error.unwrap().contains("no open alert"));
+        assert!(chat.calls().is_empty());
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn route_dedup_never_holds_back_a_resolve() {
+        use signal::Action;
+        let db = temp_db();
+        let chat = LifecycleProvider::new("chat", false);
+        let mut routing = routing_to(&["chat"]);
+        routing.routes[0].dedup = Some(routing::Window(Duration::from_secs(3600)));
+        let client = client_with_routing(vec![chat.clone()], routing, &db);
+
+        let mut trigger = input(Severity::Error);
+        trigger.dedup_key = Some("airflow:etl.load".into());
+        for _ in 0..2 {
+            let _ = client
+                .notify_sync(trigger.clone(), Duration::from_secs(5))
+                .expect("trigger");
+        }
+        let resolved = client
+            .notify_sync(lifecycle_input(Action::Resolve), Duration::from_secs(5))
+            .expect("resolve");
+        assert_eq!(resolved.status, DeliveryStatus::Delivered);
+        assert_eq!(
+            chat.calls(),
+            vec![
+                (Action::Trigger, None),
+                (Action::Resolve, Some("chat-ref".into()))
+            ]
+        );
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]

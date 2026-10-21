@@ -3,7 +3,7 @@
 use clap::{Args, Parser, Subcommand};
 use opssignal_core::config::Config;
 use opssignal_core::delivery::{DeliveryResult, DeliveryStatus};
-use opssignal_core::signal::{Severity, Signal, SignalError, SignalInput};
+use opssignal_core::signal::{Action, Severity, Signal, SignalError, SignalInput};
 use opssignal_core::source::{ConfigSource, LoadOptions};
 use opssignal_core::{Pipeline, SignalClient};
 use std::time::Duration;
@@ -36,6 +36,11 @@ enum Commands {
         #[arg(default_value = "-")]
         file: String,
     },
+    /// Acknowledge the alert with a dedup key on the providers holding
+    /// it (PagerDuty, Opsgenie, a Slack bot message, ...).
+    Acknowledge(LifecycleArgs),
+    /// Resolve the alert with a dedup key on the providers holding it.
+    Resolve(LifecycleArgs),
     /// Print what each provider would be sent for a signal, as JSON,
     /// without sending or recording it. For checking message templates.
     Preview {
@@ -64,6 +69,40 @@ struct SignalArgs {
     /// Extra fields for templates, as a JSON object.
     #[arg(long)]
     metadata: Option<String>,
+}
+
+/// Names the alert: by `--dedup-key`, or by the fields its key was
+/// computed from when it was raised.
+#[derive(Args)]
+struct LifecycleArgs {
+    #[arg(long = "dedup-key")]
+    dedup_key: Option<String>,
+    #[arg(long, default_value = "")]
+    source: String,
+    #[arg(long = "event-type", default_value = "")]
+    event_type: String,
+    #[arg(long, default_value = "")]
+    title: String,
+    #[arg(long)]
+    environment: Option<String>,
+    /// A note, such as why it was resolved.
+    #[arg(long)]
+    message: Option<String>,
+}
+
+impl LifecycleArgs {
+    fn into_input(self, action: Action) -> SignalInput {
+        SignalInput {
+            source: self.source,
+            event_type: self.event_type,
+            title: self.title,
+            environment: self.environment,
+            message: self.message,
+            dedup_key: self.dedup_key,
+            action,
+            ..Default::default()
+        }
+    }
 }
 
 impl SignalArgs {
@@ -127,6 +166,12 @@ fn main() {
             results.extend(client.flush_groups(NOTIFY_TIMEOUT));
             std::process::exit(report(&results));
         }
+        Commands::Acknowledge(alert) => {
+            lifecycle(cli.config.as_deref(), alert.into_input(Action::Acknowledge))
+        }
+        Commands::Resolve(alert) => {
+            lifecycle(cli.config.as_deref(), alert.into_input(Action::Resolve))
+        }
         Commands::NotifyBatch { file } => {
             let inputs = read_batch(&file).unwrap_or_else(|e| fail(&e));
             let client = build_client(cli.config.as_deref()).unwrap_or_else(|e| fail(&e));
@@ -152,6 +197,19 @@ fn main() {
             std::process::exit(report(&results));
         }
     }
+}
+
+/// Sends an acknowledge or resolve and exits like `notify`. One with no
+/// alert to act on is skipped (exit 0), and stderr says why.
+fn lifecycle(config: Option<&str>, input: SignalInput) -> ! {
+    let client = build_client(config).unwrap_or_else(|e| fail(&e));
+    let mut result = client
+        .notify_sync(input, NOTIFY_TIMEOUT)
+        .unwrap_or_else(|e| fail(&e));
+    for line in result.suppressed.drain(..) {
+        eprintln!("skipped: {line}");
+    }
+    std::process::exit(report(&[result]));
 }
 
 /// Prints what went wrong in `results` and returns the exit code: 1 if
@@ -201,7 +259,8 @@ fn read_batch(file: &str) -> Result<Vec<SignalInput>, String> {
         }
         let input: SignalInput = serde_json::from_str(line)
             .map_err(|e| format!("{file}:{}: not a valid signal: {e}", i + 1))?;
-        opssignal_core::signal::validate(&input).map_err(|e| format!("{file}:{}: {e}", i + 1))?;
+        opssignal_core::signal::validate(&input)
+            .map_err(|e| format!("{file}:{}: not a valid signal: {e}", i + 1))?;
         inputs.push(input);
     }
     Ok(inputs)

@@ -8,7 +8,7 @@ the file with `${VAR}` or a secret reference such as `${aws-sm:prod/opssignal#pd
 | Provider | Key | Required fields | Optional fields |
 |---|---|---|---|
 | [Console](#console) | `console` | none | `enabled` |
-| [Slack](#slack) | `slack` | `webhook_url` | none |
+| [Slack](#slack) | `slack` | `webhook_url`, or `bot_token` and `channel` | `api_url` |
 | [Webhook](#webhook) | `webhook` | `url` | none |
 | [PagerDuty](#pagerduty) | `pagerduty` | `routing_key` | `url` |
 | [Microsoft Teams](#microsoft-teams) | `teams` | `webhook_url` | none |
@@ -48,6 +48,24 @@ providers:
 
 Posts the title, message and a severity emoji to a Slack
 [incoming webhook](https://api.slack.com/messaging/webhooks).
+
+!!! info "Added in v1.0.0-beta.3"
+    Slack can post through the Web API with a bot token instead, so that
+    [acknowledging and resolving](lifecycle.md) the alert updates its message
+    in place.
+
+```yaml
+providers:
+  slack:
+    bot_token: "${SLACK_BOT_TOKEN}"   # xoxb-..., with the chat:write scope
+    channel: "#data-alerts"           # or a channel ID; invite the bot to it
+```
+
+Set exactly one of `webhook_url` and `bot_token`. With `bot_token`, the
+message is sent with `chat.postMessage` and an acknowledge or resolve edits it
+with `chat.update`. A webhook can't edit what it posted, so through a webhook
+an acknowledge or resolve is posted as a new message. `api_url` defaults to
+`https://slack.com/api`.
 
 ## Webhook
 
@@ -98,8 +116,12 @@ How a signal maps to the event:
 | `links` | `log_url`, if set, as "Logs" |
 
 Because the dedup key is stable, the same failure sent again adds to the open
-alert instead of paging a second time. OpsSignal only triggers alerts; it
-does not acknowledge or resolve them.
+alert instead of paging a second time.
+
+!!! info "Added in v1.0.0-beta.3"
+    An `acknowledge` or `resolve` signal with the same dedup key acknowledges
+    or resolves the incident; the event carries only `routing_key`,
+    `event_action` and `dedup_key`. See [Acknowledge and resolve](lifecycle.md).
 
 Route only the severities that should wake someone to PagerDuty. A route that
 sends `info` signals there will page on them.
@@ -170,8 +192,14 @@ How a signal maps to the alert:
 | `details` | `signal_id`, `event_type`, `severity`, `timestamp`, whichever of `environment`, `service`, `component`, `team`, `run_id`, `correlation_id`, `trace_id` and `log_url` are set, and each top-level `metadata` key as `metadata.<key>` |
 
 Because the alias is stable, the same failure sent again raises the open
-alert's count instead of opening a second alert. OpsSignal only creates
-alerts; it does not acknowledge or close them.
+alert's count instead of opening a second alert.
+
+!!! info "Added in v1.0.0-beta.3"
+    An `acknowledge` or `resolve` signal with the same dedup key acknowledges
+    or closes the alert with that alias (`POST .../alerts/{alias}/acknowledge`
+    or `/close` with `identifierType=alias`), with the signal's message, or its
+    title, as the note. A 404, meaning no alert has that alias, counts as done.
+    See [Acknowledge and resolve](lifecycle.md).
 
 Atlassian is folding Opsgenie into Jira Service Management. Its operations
 alert API takes the same request, so a migrated team can point `url` at the

@@ -34,8 +34,14 @@ impl EmailProvider {
         let subject = match template::render(&self.templates, "subject", signal, &[]) {
             Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
             None => {
-                let severity = signal.severity.to_string().to_uppercase();
-                format!("[{severity}] {}", signal.title)
+                // An acknowledge or resolve says so in place of the
+                // severity; the References header keeps it in the
+                // alert's thread.
+                let tag = match signal.action.label() {
+                    Some(label) => label.to_uppercase(),
+                    None => signal.severity.to_string().to_uppercase(),
+                };
+                format!("[{tag}] {}", signal.title)
             }
         };
         match &self.config.subject_prefix {

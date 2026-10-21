@@ -18,9 +18,13 @@ impl ConsoleProvider {
 
     fn line_for(&self, signal: &Signal) -> String {
         template::render(&self.templates, "text", signal, &[]).unwrap_or_else(|| {
+            let tag = match signal.action.label() {
+                Some(label) => label.to_lowercase(),
+                None => signal.severity.to_string(),
+            };
             format!(
-                "[signal:{}] {} {} — {}",
-                signal.source, signal.severity, signal.event_type, signal.title
+                "[signal:{}] {tag} {} — {}",
+                signal.source, signal.event_type, signal.title
             )
         })
     }

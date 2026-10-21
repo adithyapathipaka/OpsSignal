@@ -1,5 +1,5 @@
 use crate::delivery::Provider;
-use crate::signal::{Severity, Signal, SignalError};
+use crate::signal::{Action, Severity, Signal, SignalError};
 use crate::template::{self, Templates};
 
 /// Events API v2 endpoint for US-hosted accounts. EU accounts use
@@ -13,7 +13,8 @@ const MAX_DEDUP_KEY_CHARS: usize = 255;
 
 /// Triggers a PagerDuty alert through the Events API v2. The signal's
 /// `dedup_key` becomes PagerDuty's, so a repeat of the same signal adds
-/// to the open alert instead of paging again.
+/// to the open alert instead of paging again, and an `acknowledge` or
+/// `resolve` signal with the same key acknowledges or resolves it.
 pub struct PagerDutyProvider {
     routing_key: String,
     pub url: String,
@@ -49,6 +50,18 @@ impl PagerDutyProvider {
     }
 
     fn event_for(&self, signal: &Signal) -> serde_json::Value {
+        if signal.action.is_lifecycle() {
+            // PagerDuty takes no payload with these; the key says which
+            // alert.
+            return serde_json::json!({
+                "routing_key": self.routing_key,
+                "event_action": match signal.action {
+                    Action::Acknowledge => "acknowledge",
+                    _ => "resolve",
+                },
+                "dedup_key": truncate(signal.dedup_key.as_deref().unwrap_or_default(), MAX_DEDUP_KEY_CHARS),
+            });
+        }
         let mut details = serde_json::Map::new();
         details.insert("signal_id".into(), signal.id.to_string().into());
         details.insert("event_type".into(), signal.event_type.clone().into());
@@ -113,6 +126,10 @@ fn truncate(s: &str, max_chars: usize) -> String {
 impl Provider for PagerDutyProvider {
     fn name(&self) -> &'static str {
         "pagerduty"
+    }
+
+    fn resolves_by_key(&self) -> bool {
+        true
     }
 
     /// The routing key is a credential, so it is left out.
@@ -326,5 +343,54 @@ mod tests {
                 .count(),
             MAX_SUMMARY_CHARS
         );
+    }
+
+    #[test]
+    fn acknowledge_and_resolve_send_only_the_key() {
+        let provider = PagerDutyProvider::new("R0UT1NG".into(), None);
+        for (action, expected) in [
+            (Action::Acknowledge, "acknowledge"),
+            (Action::Resolve, "resolve"),
+        ] {
+            let mut signal = signal(Severity::Error);
+            signal.action = action;
+            let event = provider.event_for(&signal);
+            assert_eq!(
+                event,
+                serde_json::json!({
+                    "routing_key": "R0UT1NG",
+                    "event_action": expected,
+                    "dedup_key": signal.dedup_key.clone().unwrap(),
+                })
+            );
+        }
+        assert!(provider.resolves_by_key());
+    }
+
+    #[tokio::test]
+    async fn resolve_posts_to_the_events_api() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_partial_json(serde_json::json!({
+                "event_action": "resolve",
+                "dedup_key": "airflow:etl.load",
+            })))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let signal = Signal::from_input(SignalInput {
+            dedup_key: Some("airflow:etl.load".into()),
+            action: Action::Resolve,
+            source: "airflow".into(),
+            event_type: "task_succeeded".into(),
+            title: "load".into(),
+            ..Default::default()
+        });
+        PagerDutyProvider::new("k".into(), Some(server.uri()))
+            .send(&signal)
+            .await
+            .expect("202 is success");
     }
 }

@@ -231,6 +231,10 @@ impl RouteMatch {
         if !self.severity.is_empty() && !self.severity.contains(&signal.severity) {
             return false;
         }
+        self.matches_any_severity(signal)
+    }
+
+    fn matches_any_severity(&self, signal: &Signal) -> bool {
         if let Some(env) = &self.environment {
             if signal.environment.as_deref() != Some(env.as_str()) {
                 return false;
@@ -250,6 +254,26 @@ impl RoutingConfig {
     /// the order of [`RoutingConfig::plan`].
     pub fn resolve(&self, signal: &Signal) -> Vec<String> {
         self.plan(signal).providers().cloned().collect()
+    }
+
+    /// The providers of every route that matches `signal` apart from
+    /// its severity, in route order, each once. An `acknowledge` or
+    /// `resolve` with no record of its alert goes to those of them that
+    /// resolve by key: the alert it closes may have had any severity.
+    pub fn providers_any_severity(&self, signal: &Signal) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for route in self
+            .routes
+            .iter()
+            .filter(|r| r.match_rule.matches_any_severity(signal))
+        {
+            for name in &route.providers {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        names
     }
 
     /// Groups the matching routes' providers into delivery targets.
@@ -745,5 +769,21 @@ mod tests {
         let typo: Result<Vec<Route>, _> =
             serde_yaml::from_str("- match: {enviroment: prod}\n  providers: [slack]\n");
         assert!(typo.is_err());
+    }
+
+    #[test]
+    fn providers_any_severity_ignores_only_severity() {
+        let routes: Vec<Route> = serde_yaml::from_str(
+            "- match: {severity: [critical], environment: prod}\n  providers: [pagerduty, slack]\n\
+             - match: {severity: [warning]}\n  providers: [slack, opsgenie]\n\
+             - match: {environment: dev}\n  providers: [teams]\n",
+        )
+        .expect("routes");
+        let routing = RoutingConfig { routes };
+        let info = sample_signal(Severity::Info, "prod");
+        assert_eq!(
+            routing.providers_any_severity(&info),
+            vec!["pagerduty", "slack", "opsgenie"]
+        );
     }
 }

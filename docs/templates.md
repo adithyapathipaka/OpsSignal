@@ -53,6 +53,7 @@ Every template sees the signal's fields by name:
 | `message`, `environment`, `service`, `component`, `team`, `run_id`, `correlation_id`, `trace_id`, `log_url`, `dedup_key` | Undefined when the signal doesn't set them, so `{% if message %}` works and `{{ message }}` prints nothing. |
 | `metadata` | The signal's metadata object, such as `{{ metadata.dag_id }}`. Loop over it with the `items` filter. |
 | `id`, `timestamp` | The signal id, and the time it was created as RFC 3339 in UTC. |
+| `action` | `trigger`, `acknowledge` or `resolve`; see [Acknowledge and resolve](lifecycle.md). Added in v1.0.0-beta.3. |
 
 Filters and tests from Jinja's built-in set work, such as `upper`, `lower`,
 `default`, `replace`, `trim`, `join`, `length` and `tojson`.

@@ -93,6 +93,27 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     async fn send(&self, signal: &crate::signal::Signal) -> Result<(), crate::signal::SignalError>;
 
+    /// What the core calls to deliver. `alert_ref` is what this provider
+    /// returned when it delivered the alert an `acknowledge` or
+    /// `resolve` acts on, such as the Slack message to update; a
+    /// provider that needs no reference returns `None` and leaves this
+    /// as is, implementing only `send`.
+    async fn send_with_ref(
+        &self,
+        signal: &crate::signal::Signal,
+        _alert_ref: Option<&str>,
+    ) -> Result<Option<String>, crate::signal::SignalError> {
+        self.send(signal).await.map(|()| None)
+    }
+
+    /// Whether the provider acknowledges and resolves alerts by dedup
+    /// key on its own side (PagerDuty, Opsgenie), so an `acknowledge` or
+    /// `resolve` can go to it even when this process has no record of
+    /// the alert, as when another host raised it.
+    fn resolves_by_key(&self) -> bool {
+        false
+    }
+
     /// What `send` would deliver for `signal`, without sending it, for
     /// checking templates (`signal preview`). `None` when the provider
     /// can't show it.

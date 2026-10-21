@@ -26,6 +26,20 @@ the next tag.
   Flushing (Python `atexit`, C `signal_flush`, Rust drop) sends open groups,
   and the new `opssignal notify-batch` sends newline-delimited JSON signals
   and their digests in one run. Groups are per process.
+- **Acknowledge and resolve:** a signal's new `action` (`trigger` by default,
+  `acknowledge`, `resolve`) acts on the alert its dedup key names. PagerDuty
+  acknowledges or resolves the incident, Opsgenie acknowledges or closes the
+  alert, Slack with the new `bot_token` and `channel` mode updates the
+  alert's message in place, and other providers that got the alert are sent
+  an "Acknowledged"/"Resolved" message. It goes to the providers that got the
+  alert (tracked in a new `alerts` table in the SQLite file), is never held
+  back by a route's `dedup` or `rate_limit`, and with no record of the alert
+  goes only to PagerDuty and Opsgenie, which resolve by key. Python gets
+  `acknowledge()`, `resolve()` and `notify(action=...)`, the CLI gets
+  `opssignal acknowledge` and `opssignal resolve`, C takes `"action"` in the
+  JSON, and the Airflow adapter gets `success_callback`, which resolves the
+  task's failure alert. Signal JSON input may now leave out any field;
+  validation reports the ones a signal needs.
 
 ## [1.0.0-beta.2] - 2026-10-21
 
