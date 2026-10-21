@@ -8,11 +8,28 @@ version = "0.1.0"
 description = "AWS support for opssignal (S3, AppConfig, DynamoDB, Secrets Manager)"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
+readme = "README.md"
+keywords = ["notifications", "alerting", "slack", "webhook", "observability", "airflow"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Development Status :: 3 - Alpha",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
 ]
+
+[project.urls]
+Homepage = "https://github.com/adithyapathipaka/OpsSignal"
+Documentation = "https://adithyapathipaka.github.io/OpsSignal/"
+Source = "https://github.com/adithyapathipaka/OpsSignal"
+Issues = "https://github.com/adithyapathipaka/OpsSignal/issues"
 
 [tool.maturin]
 python-source = "."
