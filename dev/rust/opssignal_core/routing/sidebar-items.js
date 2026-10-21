@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DeliveryMode"],"struct":["DeliveryPlan","RateLimit","Route","RouteMatch","RoutingConfig","Window"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_GROUP_WAIT","GROUP_FIELDS"],"enum":["DeliveryMode"],"struct":["DeliveryPlan","RateLimit","Route","RouteMatch","RoutingConfig","Window"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_GROUP_SIZE"],"fn":["is_group_field"]};

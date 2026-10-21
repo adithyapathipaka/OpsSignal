@@ -1003,14 +1003,29 @@ process on a host that shares the file sees the same windows. A send that
 ends <code>failed</code> is removed again so it can't suppress the next occurrence. Any
 error reading the history lets the signal through. Coordinating across hosts
 is deliberately not part of the embedded SDK.</p>
+<p>Routes that set <code>group_by</code> or <code>group_wait</code> do not add providers to the plan
+either; the plan lists them as grouped (<code>crates/core/src/group.rs</code>). After the
+signal is stored, the client adds it to the open group for the route and the
+signal's <code>group_by</code> values, held in the client's memory. The first member of a
+group starts a timer on the client's runtime; when it fires, or when the
+client is flushed, the group is closed and sent through that route alone as
+one digest, a signal built from the members with its own id. A group of one
+is sent as that signal. Only the route's <code>dedup</code> is checked per signal; its
+<code>rate_limit</code> is checked per digest, under a key of its own. A signal that only
+grouped routes take is stored as <code>grouped</code>, and its row takes the digest's
+outcome. Groups are per client, so per process: grouping across processes or
+hosts would need shared state and a single sender, which belongs in the
+control plane, not the embedded SDK.</p>
 <p><code>notify_async</code> callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
 would cut them off. <code>SignalClient::flush(timeout)</code> waits for them, and every
 binding calls it on the way out: dropping a Rust <code>SignalClient</code> flushes for up
 to 5 seconds, the Python package registers <code>flush()</code> with <code>atexit</code>, and C
 hosts call <code>signal_flush(timeout_ms)</code> before exiting (the library holds a
-process-global client that is never dropped). The CLI uses <code>notify_sync</code>, so
-it has nothing in flight. A signal still undelivered when the wait runs out
+process-global client that is never dropped). A flush first sends every open
+group, so digests are not lost when a process ends before <code>group_wait</code> runs
+out. The CLI uses <code>notify_sync</code> and then <code>flush_groups</code>, so it has nothing in
+flight when it exits. A signal still undelivered when the wait runs out
 stays in the sink as <code>pending</code>.</p>
 <h2 id="signal-model">Signal model<a class="headerlink" href="#signal-model" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Signal</span><span class="w"> </span><span class="p">{</span>

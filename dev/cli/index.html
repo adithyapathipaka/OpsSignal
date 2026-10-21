@@ -522,6 +522,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-notify-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal notify-batch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#opssignal-preview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -708,6 +719,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opssignal-notify-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opssignal notify-batch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#opssignal-preview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -825,7 +847,30 @@ uses the same Rust core, config and routing as the Python package.</p>
 </tbody>
 </table>
 <p>Unlike the Python <code>notify()</code>, the CLI waits for delivery, with a 5 second
-timeout, so a CI step can fail when an alert didn't go out.</p>
+timeout, so a CI step can fail when an alert didn't go out. If a
+<a href="../configuration/#grouping-and-digests">grouped route</a> holds the signal, the
+CLI sends it before exiting rather than waiting for <code>group_wait</code>, since no
+later run can join the group; use <code>notify-batch</code> to group several signals.</p>
+<h2 id="opssignal-notify-batch"><code>opssignal notify-batch</code><a class="headerlink" href="#opssignal-notify-batch" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>Sends many signals in one run, so grouped routes can send one digest.</p>
+</div>
+<div class="highlight"><pre><span></span><code>dbt_failures_to_json<span class="w"> </span><span class="p">|</span><span class="w"> </span>opssignal<span class="w"> </span>notify-batch
+opssignal<span class="w"> </span>notify-batch<span class="w"> </span>failures.ndjson
+</code></pre></div>
+<p>Reads one JSON signal per line from the file, or from stdin when the file is
+<code>-</code> or left out. Each line has the fields of the C library's JSON payload:
+<code>source</code>, <code>event_type</code>, <code>title</code> and <code>severity</code> are required, and <code>message</code>,
+<code>environment</code>, <code>service</code>, <code>component</code>, <code>team</code>, <code>run_id</code>, <code>correlation_id</code>,
+<code>trace_id</code>, <code>log_url</code>, <code>metadata</code> and <code>dedup_key</code> are optional:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dbt"</span><span class="p">,</span><span class="w"> </span><span class="nt">"event_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dbt_test_failed"</span><span class="p">,</span><span class="w"> </span><span class="nt">"severity"</span><span class="p">:</span><span class="w"> </span><span class="s2">"error"</span><span class="p">,</span><span class="w"> </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"not_null_orders_id failed"</span><span class="p">,</span><span class="w"> </span><span class="nt">"run_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inv-1"</span><span class="p">}</span>
+</code></pre></div>
+<p>Every line is checked before anything is sent, so a bad line exits <code>2</code> with
+its line number and sends nothing. The signals are then sent one after
+another, the open groups are sent, and stderr ends with a summary such as
+<code>sent 40 signal(s); 40 held for 1 group send(s)</code>. The exit code covers every
+signal and digest: <code>1</code> if any of them failed or was only partly delivered.</p>
 <h2 id="opssignal-preview"><code>opssignal preview</code><a class="headerlink" href="#opssignal-preview" title="Permanent link">&para;</a></h2>
 <div class="admonition info">
 <p class="admonition-title">Added in v1.0.0-beta.2</p>
@@ -857,7 +902,7 @@ that isn't configured.</p>
 <tbody>
 <tr>
 <td><code>0</code></td>
-<td>Delivered, or held back by a route's <a href="../configuration/#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a> (stderr then shows <code>suppressed: ...</code> with the reason).</td>
+<td>Delivered, or held back by a route's <a href="../configuration/#dedup-and-rate-limits"><code>dedup</code> or <code>rate_limit</code></a> (stderr then shows <code>suppressed: ...</code> with the reason). A signal held for a <a href="../configuration/#grouping-and-digests">digest</a> counts by how the digest went.</td>
 </tr>
 <tr>
 <td><code>1</code></td>

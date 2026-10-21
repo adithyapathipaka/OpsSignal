@@ -1,2 +1,2 @@
-createSrcSidebar('[["opssignal_core",["",[["providers",[],["console.rs","email.rs","external.rs","mod.rs","opsgenie.rs","pagerduty.rs","slack.rs","teams.rs","webhook.rs"]]],["chain.rs","config.rs","delivery.rs","inflight.rs","lib.rs","reload.rs","routing.rs","secrets.rs","signal.rs","sink.rs","source.rs","template.rs","throttle.rs"]]]]');
-//{"start":19,"fragment_lengths":[317]}
+createSrcSidebar('[["opssignal_core",["",[["providers",[],["console.rs","email.rs","external.rs","mod.rs","opsgenie.rs","pagerduty.rs","slack.rs","teams.rs","webhook.rs"]]],["chain.rs","config.rs","delivery.rs","group.rs","inflight.rs","lib.rs","reload.rs","routing.rs","secrets.rs","signal.rs","sink.rs","source.rs","template.rs","throttle.rs"]]]]');
+//{"start":19,"fragment_lengths":[328]}

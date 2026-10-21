@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_FLUSH_TIMEOUT"],"mod":["config","delivery","providers","routing","secrets","signal","sink","source","template"],"struct":["Pipeline","SignalClient"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_FLUSH_TIMEOUT"],"mod":["config","delivery","group","providers","routing","secrets","signal","sink","source","template"],"struct":["Pipeline","SignalClient"]};

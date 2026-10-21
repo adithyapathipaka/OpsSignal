@@ -534,7 +534,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Dedup and rate limits">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grouping-and-digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grouping and digests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grouping and digests">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -995,7 +1006,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Dedup and rate limits">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grouping-and-digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grouping and digests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grouping and digests">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1719,6 +1741,82 @@ back the repeats:</p>
 </ul>
 <p>A signal no route matches still goes to <code>console</code>; that fallback is never
 suppressed.</p>
+<h3 id="grouping-and-digests">Grouping and digests<a class="headerlink" href="#grouping-and-digests" title="Permanent link">&para;</a></h3>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+<p>Routes can set <code>group_by</code> and <code>group_wait</code>.</p>
+</div>
+<p>A dbt run that fails 40 tests, or a bad deploy that breaks every DAG at once,
+is one incident. A grouped route holds matching signals for a while and sends
+one digest per group instead of one message per signal:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>group_by</code></td>
+<td>a list of fields: <code>source</code>, <code>service</code>, <code>component</code>, <code>event_type</code>, <code>severity</code>, <code>title</code>, <code>environment</code>, <code>team</code>, <code>run_id</code>, <code>correlation_id</code>, <code>dedup_key</code>, or <code>metadata.&lt;key&gt;</code> (dots go deeper, as in <code>metadata.dag.id</code>)</td>
+<td>Signals with the same values for these fields share a group. Leave it out (with <code>group_wait</code> set) to put every matching signal in one group.</td>
+</tr>
+<tr>
+<td><code>group_wait</code></td>
+<td>a window, as for <code>dedup</code> (default <code>30s</code>)</td>
+<td>How long a group stays open after its first signal. When it runs out, the digest is sent.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="nt">routes</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># One Slack message per dbt run, however many tests fail.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">dbt</span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">slack</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">group_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">run_id</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">group_wait</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m</span>
+<span class="w">  </span><span class="c1"># Pages still go out one by one, at once.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">match</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">critical</span><span class="p p-Indicator">]}</span>
+<span class="w">    </span><span class="nt">providers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">pagerduty</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>The digest is a signal like any other, built from its members:</p>
+<ul>
+<li><code>title</code> is the first member's title and how many more there are:
+  <code>dbt test failed: not_null_orders_id (+39 more)</code>.</li>
+<li><code>message</code> lists the members, one <code>- [severity] title</code> line each, up to 20,
+  then <code>...and N more</code>.</li>
+<li><code>severity</code> is the highest among the members. <code>source</code>, <code>environment</code>,
+  <code>run_id</code> and the other fields keep a value every member shares and are
+  left out otherwise (<code>source</code> becomes <code>opssignal</code>, <code>event_type</code> <code>digest</code>).</li>
+<li><code>metadata.digest</code> has <code>count</code>, the <code>group</code> values, <code>first_at</code>, <code>last_at</code>
+  and <code>signals</code> (the id, title, severity, source, event type and time of the
+  first 100 members), for <a href="../templates/#digests">templates</a>.</li>
+</ul>
+<p>A group of one is sent as that signal, unchanged.</p>
+<p>How grouping behaves:</p>
+<ul>
+<li><strong>Per route.</strong> A grouped route sends only digests; other matching routes
+  still send each signal at once, so a page can go out immediately while the
+  channel gets the digest. A digest goes to the grouped route's own providers
+  in its own <code>mode</code>.</li>
+<li><strong>Sent on exit too.</strong> <code>flush()</code> in Python (run by <code>atexit</code>), <code>signal_flush</code>
+  in C, dropping a Rust <code>SignalClient</code>, and every CLI command send open groups
+  before they wait for deliveries, so a process that ends before <code>group_wait</code>
+  runs out still delivers its digest, just sooner.</li>
+<li><strong>With dedup and rate limits.</strong> A grouped route's <code>dedup</code> drops repeats
+  before they join a group. Its <code>rate_limit</code> counts digests, not signals, so
+  <code>rate_limit: {max: 5, per: 1h}</code> means at most five digests an hour.</li>
+<li><strong>In the sink</strong>, each member is stored with status <code>grouped</code> until its
+  digest goes out, then takes the digest's outcome. The digest is stored as a
+  signal of its own, with the member ids in <code>metadata.digest.signals</code>. A
+  member also sent at once on another route keeps that route's outcome.</li>
+<li><strong>One process.</strong> Groups are kept in the client's memory, so they collect
+  the signals one process sends: a dbt run, a long-running service, or a
+  <a href="../cli/#opssignal-notify-batch">CLI batch</a>. Separate processes (each Airflow task, each
+  <code>opssignal notify</code>) do not share groups. A group holds at most 500 signals;
+  the next one opens a new group.</li>
+</ul>
 <h4 id="dedup-keys">Dedup keys<a class="headerlink" href="#dedup-keys" title="Permanent link">&para;</a></h4>
 <p>Each signal's dedup key is the one the caller passed (<code>dedup_key=</code> in Python,
 <code>dedup_key</code> in the C JSON payload), or else a hash of its <code>source</code>,
@@ -1727,7 +1825,8 @@ it, so a retry with a new error message is still the same incident. Pass your
 own key, such as the DAG and task id, when the title changes between retries.</p>
 <p>A route that names a provider not configured under <code>providers</code> is a load-time
 error, as is a route with an empty <code>providers</code> list, an unknown <code>mode</code>, a
-<code>dedup</code> or <code>rate_limit</code> of zero, or an unknown key (so a typo such as
+<code>dedup</code>, <code>rate_limit</code> or <code>group_wait</code> of zero, a <code>group_by</code> field that isn't
+one of the fields above, or an unknown key (so a typo such as
 <code>mod: fanout</code> fails at load time instead of leaving the route on failover).
 Unknown keys inside <code>match</code> are rejected too, so a typo such as
 <code>enviroment: prod</code> fails at load time instead of matching every signal.</p>

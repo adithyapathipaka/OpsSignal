@@ -562,6 +562,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Unreleased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -577,7 +594,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -627,7 +644,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -750,6 +767,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Unreleased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -765,7 +799,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -815,7 +849,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Added
@@ -872,12 +906,26 @@ may still change config keys, the Python API and the SQLite schema.</p>
 <h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <p>Changes merged to <code>main</code> that are not in a release yet. They will ship in
 the next tag.</p>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Grouping and digests:</strong> a route can set <code>group_by</code> (signal fields or
+  <code>metadata.&lt;key&gt;</code>) and <code>group_wait</code> to hold matching signals and send one
+  digest per group instead of one message each, so a dbt run with 40 failing
+  tests posts once. The digest is a normal signal (title, member list,
+  highest severity, <code>metadata.digest</code> for templates) sent to the route's
+  providers in its <code>mode</code>; other routes still send at once. A grouped route's
+  <code>dedup</code> drops repeats before they join, and its <code>rate_limit</code> counts
+  digests. Members are stored as <code>grouped</code> and take the digest's outcome.
+  Flushing (Python <code>atexit</code>, C <code>signal_flush</code>, Rust drop) sends open groups,
+  and the new <code>opssignal notify-batch</code> sends newline-delimited JSON signals
+  and their digests in one run. Groups are per process.</li>
+</ul>
 <h2 id="100-beta2-2026-10-21"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2">1.0.0-beta.2</a> - 2026-10-21<a class="headerlink" href="#100-beta2-2026-10-21" title="Permanent link">&para;</a></h2>
 <p>Second beta: send one signal to several places at once, shape each
 provider's message, and keep noisy routes quiet. Configs written for
 <code>1.0.0-beta.1</code> keep working unchanged, except that a misspelled key inside
 a route's <code>match</code> is now reported instead of silently matching everything.</p>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Fan-out delivery:</strong> a route can set <code>mode: fanout</code> to deliver to every
   provider it lists at once, each retried on its own, so a provider that
@@ -932,7 +980,7 @@ a route's <code>match</code> is now reported instead of silently matching everyt
 <h2 id="100-beta1-2026-10-20"><a href="https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1">1.0.0-beta.1</a> - 2026-10-20<a class="headerlink" href="#100-beta1-2026-10-20" title="Permanent link">&para;</a></h2>
 <p>First public build, published to PyPI (<code>pip install --pre opssignal</code>) and
 crates.io (<code>opssignal-core</code>, <code>opssignal-cli</code>).</p>
-<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Providers:</strong> Slack, Microsoft Teams, PagerDuty (Events API v2),
   Opsgenie, email (SMTP, or Amazon SES with <code>opssignal[aws]</code>), generic

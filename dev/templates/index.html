@@ -534,6 +534,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Digests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-and-c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -829,6 +840,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Digests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-and-c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1025,6 +1047,25 @@ would be sent for a signal, without sending or recording anything:</p>
 <div class="highlight"><pre><span></span><code>opssignal<span class="w"> </span>preview<span class="w"> </span>--config<span class="w"> </span>signal.yaml<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--source<span class="w"> </span>airflow<span class="w"> </span>--event-type<span class="w"> </span>task_failed<span class="w"> </span>--severity<span class="w"> </span>error<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--title<span class="w"> </span><span class="s2">"load failed"</span><span class="w"> </span>--environment<span class="w"> </span>prod<span class="w"> </span>--metadata<span class="w"> </span><span class="s1">'{"dag_id": "orders"}'</span>
+</code></pre></div>
+<h2 id="digests">Digests<a class="headerlink" href="#digests" title="Permanent link">&para;</a></h2>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+</div>
+<p>A <a href="../configuration/#grouping-and-digests">grouped route</a> sends a digest, which
+templates see as a signal like any other: <code>title</code> reads
+<code>&lt;first title&gt; (+N more)</code> and <code>message</code> lists the members. <code>metadata.digest</code>
+is set only on digests, with <code>count</code>, <code>group</code> (the <code>group_by</code> values),
+<code>first_at</code>, <code>last_at</code> and <code>signals</code> (<code>id</code>, <code>title</code>, <code>severity</code>, <code>source</code>,
+<code>event_type</code> and <code>timestamp</code> of up to 100 members):</p>
+<div class="highlight"><pre><span></span><code><span class="nt">providers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">slack</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">webhook_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SLACK_WEBHOOK_URL}</span>
+<span class="w">    </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">text</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">        </span><span class="no">{% if metadata.digest %}{{ emoji }} {{ metadata.digest.count }} dbt failures in run {{ run_id }}</span>
+<span class="w">        </span><span class="no">{% for s in metadata.digest.signals %}• {{ s.title }}</span>
+<span class="w">        </span><span class="no">{% endfor %}{% else %}{{ emoji }} {{ title }}{% endif %}</span>
 </code></pre></div>
 <h2 id="python-and-c">Python and C<a class="headerlink" href="#python-and-c" title="Permanent link">&para;</a></h2>
 <p>Templates live in the config, so the Python package and the C library use them
