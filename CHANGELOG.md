@@ -22,13 +22,13 @@ the next tag.
   processes on one host (cron, Airflow tasks, the CLI) and across restarts.
   A failed send never suppresses the next one. The CLI exits 0 for a
   suppressed signal and prints the reason
-  ([#PR](https://github.com/adithyapathipaka/OpsSignal/pull/PR)).
+  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
 ### Fixed
 
 - An unknown key inside a route's `match` (such as `enviroment: prod`) is now
   a load-time error. It used to be ignored, so the route matched every signal
-  ([#PR](https://github.com/adithyapathipaka/OpsSignal/pull/PR)).
+  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
 ### Changed
 
