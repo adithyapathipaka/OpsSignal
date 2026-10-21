@@ -62,7 +62,7 @@ that isn't configured.
 
 | Code | Meaning |
 |---|---|
-| `0` | Delivered. |
+| `0` | Delivered, or held back by a route's [`dedup` or `rate_limit`](configuration.md#dedup-and-rate-limits) (stderr then shows `suppressed: ...` with the reason). |
 | `1` | Delivery failed or timed out, or a [`fanout`](configuration.md#delivery-modes) route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result. |
 | `2` | Bad input (blank title, unknown severity) or a config that fails to load. |
 

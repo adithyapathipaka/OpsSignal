@@ -89,6 +89,17 @@ signal again because another provider failed. The overall status is
 config without `fanout` has a single target and behaves exactly as it did
 before delivery modes existed.
 
+Routes that set `dedup` or `rate_limit` are checked while the plan is built,
+on the caller's thread, so repeats are judged in the order they were sent. A
+route held back adds no providers; if every matching route was held back, the
+plan is empty and the signal is stored as `skipped` (the console fallback is
+only for signals that match nothing). The history is a `throttle` table in the
+sink's SQLite file, written inside an `IMMEDIATE` transaction, so every
+process on a host that shares the file sees the same windows. A send that
+ends `failed` is removed again so it can't suppress the next occurrence. Any
+error reading the history lets the signal through. Coordinating across hosts
+is deliberately not part of the embedded SDK.
+
 `notify_async` callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
 would cut them off. `SignalClient::flush(timeout)` waits for them, and every

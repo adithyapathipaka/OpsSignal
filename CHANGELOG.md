@@ -30,6 +30,14 @@ the next tag.
   without sending or recording it, and `opssignal notify`/`preview` take
   `--metadata` as a JSON object
   ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
+- **Dedup and rate limits per route:** `dedup: 30m` sends each incident (dedup
+  key) at most once per window, and `rate_limit: {max: 10, per: 1h}` caps how
+  many signals a route sends. Held-back signals are stored with status
+  `skipped`. The history lives in the SQLite file, so it holds across
+  processes on one host (cron, Airflow tasks, the CLI) and across restarts.
+  A failed send never suppresses the next one. The CLI exits 0 for a
+  suppressed signal and prints the reason
+  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
 ### Changed
 
@@ -41,6 +49,12 @@ the next tag.
   classifiers ([#25](https://github.com/adithyapathipaka/OpsSignal/pull/25)).
   PyPI fixes a version's metadata at its first upload, so this shows from
   the next release; the `1.0.0b1` pages stay without a description.
+
+### Fixed
+
+- An unknown key inside a route's `match` (such as `enviroment: prod`) is now
+  a load-time error. It used to be ignored, so the route matched every signal
+  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
 ## [1.0.0-beta.1] - 2026-10-20
 

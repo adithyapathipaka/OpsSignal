@@ -263,6 +263,51 @@ def test_fanout_route_delivers_to_every_provider(tmp_path):
     ], rows.stderr
 
 
+def test_route_dedup_suppresses_repeats_of_one_incident(tmp_path):
+    db = tmp_path / "signals.db"
+    config = tmp_path / "signal.yaml"
+    config.write_text(
+        "routes:\n"
+        "  - match: {}\n"
+        "    providers: [console]\n"
+        "    dedup: 10m\n"
+        f'storage:\n  path: "{db}"\n'
+    )
+    result = _run_isolated(
+        """
+        from opssignal import flush, notify
+        for i in range(3):
+            # Same caller-supplied key, so these are one incident even
+            # though the titles differ.
+            notify(source="pytest", event_type="check", title=f"retry {i}",
+                   dedup_key="nightly-load")
+        notify(source="pytest", event_type="check", title="other incident")
+        assert flush(5.0)
+        """,
+        {"SIGNAL_CONFIG": str(config)},
+    )
+    assert result.returncode == 0, result.stderr
+
+    rows = _run_isolated(
+        """
+        import json, sqlite3, sys
+        with sqlite3.connect(sys.argv[1]) as conn:
+            print(json.dumps(conn.execute(
+                "SELECT title, delivery_status FROM signals ORDER BY timestamp"
+            ).fetchall()))
+        """,
+        {},
+        str(db),
+    )
+    assert rows.returncode == 0, rows.stderr
+    assert sorted(tuple(r) for r in json.loads(rows.stdout)) == [
+        ("other incident", "delivered"),
+        ("retry 0", "delivered"),
+        ("retry 1", "skipped"),
+        ("retry 2", "skipped"),
+    ]
+
+
 class _BodyHook(http.server.BaseHTTPRequestHandler):
     bodies: typing.ClassVar[list] = []
 

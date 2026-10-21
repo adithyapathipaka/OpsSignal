@@ -1,5 +1,6 @@
 //! Runs the built `opssignal` binary and checks its exit codes:
-//! 0 delivered, 1 delivery failed or partial, 2 bad input or config.
+//! 0 delivered or suppressed, 1 delivery failed or partial, 2 bad input
+//! or config.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -243,6 +244,27 @@ fn unsupported_config_url_exits_two() {
 
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("unsupported scheme"));
+}
+
+#[test]
+fn repeat_inside_the_dedup_window_is_suppressed_across_runs() {
+    let dir = TempDir::new();
+    let config = dir.config("routes:\n  - match: {}\n    providers: [console]\n    dedup: 10m\n");
+    let config = config.to_str().expect("utf-8 path");
+
+    let first = run(&notify_args(config, &[]), &dir);
+    assert_eq!(first.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&first.stdout).contains("main is red"));
+
+    // A second process shares the history through signals.db.
+    let second = run(&notify_args(config, &[]), &dir);
+    assert_eq!(second.status.code(), Some(0));
+    assert!(!String::from_utf8_lossy(&second.stdout).contains("main is red"));
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("suppressed: route [console]: duplicate of a signal sent"),
+        "{stderr}"
+    );
 }
 
 fn preview_args<'a>(config: &'a str, extra: &[&'a str]) -> Vec<&'a str> {

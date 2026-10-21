@@ -35,6 +35,12 @@ routes:
       environment: prod
     providers:
       - slack
+    # Send each incident at most once per 30 minutes, and at most
+    # 20 signals an hour on this route.
+    # dedup: 30m
+    # rate_limit:
+    #   max: 20
+    #   per: 1h
   - match:
       severity: [warning]
     providers:

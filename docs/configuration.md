@@ -376,10 +376,83 @@ each provider's result too; see [`storage`](#storage).
 If no route matches, the list is just `console`. That fallback is built into
 the routing engine and cannot be configured away.
 
+### Dedup and rate limits
+
+!!! info "Added in v1.0.0-beta.2"
+    Routes can set `dedup` and `rate_limit`.
+
+A failing job that retries every minute, or one bad deploy that breaks 200
+DAGs, should page once, not hundreds of times. Two optional route fields hold
+back the repeats:
+
+| Field | Value | Effect |
+|---|---|---|
+| `dedup` | a window: `30s`, `10m`, `2h`, `1d` (a bare number is seconds) | The route sends each [dedup key](#dedup-keys) at most once per window. Repeats inside the window are suppressed. |
+| `rate_limit` | `{max: N, per: <window>}` | The route sends at most `N` signals in any sliding `per` window, whatever their key. Signals over the limit are suppressed. |
+
+```yaml
+routes:
+  # One page per incident every 30 minutes, and never more than 10 pages
+  # an hour even if every DAG fails at once.
+  - match:
+      severity: [critical]
+      environment: prod
+    providers: [pagerduty, slack]
+    mode: fanout
+    dedup: 30m
+    rate_limit:
+      max: 10
+      per: 1h
+  # The channel still gets every warning, unthrottled.
+  - match:
+      severity: [warning, error]
+    providers: [slack]
+```
+
+How they behave:
+
+- **Per route.** A suppressed route adds none of its providers for that
+  signal; other matching routes still send. To page once but keep every
+  occurrence in a channel, give the paging route a `dedup` and add an
+  unthrottled route for the channel.
+- **The window starts at the last send**, not the last repeat, so a
+  long-running incident re-alerts once per `dedup` window as a reminder.
+- **Only sends count.** A suppressed signal does not use up the `rate_limit`,
+  and a signal that no provider delivered (status `failed`) is taken back, so
+  the next occurrence is tried again instead of being suppressed as a
+  duplicate of an alert nobody received.
+- **Suppressed signals are still recorded** in the sink with status
+  `skipped` and the reason in `error`, for example
+  `route [pagerduty, slack]: duplicate of a signal sent 4m ago (dedup 30m)`.
+  If a signal was suppressed on one route and delivered on another, its
+  status is the delivered one.
+- **Shared by every process on the host** that uses the same
+  [`storage.path`](#storage): the history is kept in that SQLite file, so a
+  CLI run from cron, each Airflow task process and a restarted service all
+  see the same windows. Hosts do not share it with each other.
+- **Editing a route** (its match, providers, mode or limits) starts its
+  history afresh.
+- If the history can't be read (for example the file is locked by another
+  process for more than 2 seconds), the signal is sent. Throttling never
+  costs you an alert.
+
+A signal no route matches still goes to `console`; that fallback is never
+suppressed.
+
+#### Dedup keys
+
+Each signal's dedup key is the one the caller passed (`dedup_key=` in Python,
+`dedup_key` in the C JSON payload), or else a hash of its `source`,
+`event_type`, `title` and `environment`. Severity and message are not part of
+it, so a retry with a new error message is still the same incident. Pass your
+own key, such as the DAG and task id, when the title changes between retries.
+
 A route that names a provider not configured under `providers` is a load-time
-error, as is a route with an empty `providers` list, an unknown `mode`, or an
-unknown key (so a typo such as `mod: fanout` fails at load time instead of
-leaving the route on failover).
+error, as is a route with an empty `providers` list, an unknown `mode`, a
+`dedup` or `rate_limit` of zero, or an unknown key (so a typo such as
+`mod: fanout` fails at load time instead of leaving the route on failover).
+Unknown keys inside `match` are rejected too, so a typo such as
+`enviroment: prod` fails at load time instead of matching every signal.
 
 ## `storage`
 
@@ -397,6 +470,11 @@ and `provider`, the comma-separated providers that delivered it.
 of a fan-out therefore still shows which providers already have the signal.
 Databases created by earlier versions get the `deliveries` table the next time
 they are opened.
+
+A third table, `throttle`, holds the recent sends of routes that set
+[`dedup` or `rate_limit`](#dedup-and-rate-limits). Rows older than a route's
+windows are deleted as it sends. Signals those settings held back are stored
+in `signals` with status `skipped`.
 
 Every signal is written to the sink with its delivery status (`delivered` or
 `failed`), the provider that delivered it, and any error.

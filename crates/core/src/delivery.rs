@@ -9,6 +9,8 @@ pub enum DeliveryStatus {
     /// A fan-out reached some of its targets but not all of them.
     Partial,
     Failed,
+    /// Not sent: every route it matched was held back by its `dedup` or
+    /// `rate_limit`.
     Skipped,
 }
 
@@ -41,6 +43,11 @@ pub struct DeliveryResult {
     /// One entry per provider tried, in plan order.
     #[serde(default)]
     pub deliveries: Vec<ProviderOutcome>,
+    /// Matching routes held back by their `dedup` or `rate_limit`, one
+    /// line per route with the reason. A signal can be delivered on one
+    /// route and suppressed on another.
+    #[serde(default)]
+    pub suppressed: Vec<String>,
 }
 
 impl DeliveryResult {
@@ -52,6 +59,7 @@ impl DeliveryResult {
             error: None,
             attempts: 0,
             deliveries: Vec::new(),
+            suppressed: Vec::new(),
         }
     }
 }
