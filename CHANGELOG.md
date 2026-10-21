@@ -13,8 +13,21 @@ The Python packages use PEP 440 spelling for the same version, so
 Changes merged to `main` that are not in a release yet. They will ship in
 the next tag.
 
+## [1.0.0-beta.2] - 2026-10-21
+
+Second beta: send one signal to several places at once, shape each
+provider's message, and keep noisy routes quiet. Configs written for
+`1.0.0-beta.1` keep working unchanged, except that a misspelled key inside
+a route's `match` is now reported instead of silently matching everything.
+
 ### Added
 
+- **Fan-out delivery:** a route can set `mode: fanout` to deliver to every
+  provider it lists at once, each retried on its own, so a provider that
+  already got the signal is never sent it again because another failed.
+  `failover` stays the default. A fan-out that reaches only some providers
+  is reported as partial, with each provider's result, and the CLI exits 1
+  ([#26](https://github.com/adithyapathipaka/OpsSignal/pull/26)).
 - **Message templates per provider:** an optional `template` block under any
   provider replaces parts of its message with Jinja text, such as Slack's
   `text`, PagerDuty's `summary`, Teams' `title`/`text`, Opsgenie's
@@ -42,8 +55,11 @@ the next tag.
 ### Changed
 
 - Rust API: `ConsoleProvider` is now a struct built with
-  `ConsoleProvider::new()`, and the `Provider` trait has a `preview` method
-  with a default, so existing implementations still compile.
+  `ConsoleProvider::new()`, the `Provider` trait has a `preview` method
+  with a default, so existing implementations still compile, and
+  `DeliveryResult` gains a `Partial` status with per-provider results.
+- The SQLite sink keeps one `deliveries` row per signal and provider, so a
+  signal's history shows which providers already have it.
 - PyPI pages for `opssignal`, `opssignal-aws`, `opssignal-gcp` and
   `opssignal-azure` get a project description, links, keywords and
   classifiers ([#25](https://github.com/adithyapathipaka/OpsSignal/pull/25)).
@@ -100,5 +116,6 @@ crates.io (`opssignal-core`, `opssignal-cli`).
 - SQLite is the only sink; a team config file can add routes but not
   remove inherited ones.
 
-[Unreleased]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...HEAD
+[Unreleased]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...HEAD
+[1.0.0-beta.2]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1
