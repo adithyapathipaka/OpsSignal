@@ -82,4 +82,11 @@ pub struct ProviderOutcome {
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     async fn send(&self, signal: &crate::signal::Signal) -> Result<(), crate::signal::SignalError>;
+
+    /// What `send` would deliver for `signal`, without sending it, for
+    /// checking templates (`signal preview`). `None` when the provider
+    /// can't show it.
+    fn preview(&self, _signal: &crate::signal::Signal) -> Option<serde_json::Value> {
+        None
+    }
 }

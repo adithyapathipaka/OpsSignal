@@ -12,6 +12,9 @@ providers:
     enabled: true
   slack:
     webhook_url: "${SLACK_WEBHOOK_URL}"
+    # Optional: reshape the message (Jinja syntax; see docs/templates.md).
+    # template:
+    #   text: "{{ emoji }} [{{ environment | default('no env') }}] *{{ title }}*"
   # pagerduty:
   #   routing_key: "${PAGERDUTY_ROUTING_KEY}"
   # teams:

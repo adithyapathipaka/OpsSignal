@@ -13,6 +13,7 @@ pub mod secrets;
 pub mod signal;
 pub mod sink;
 pub mod source;
+pub mod template;
 mod throttle;
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
@@ -52,42 +53,65 @@ impl Pipeline {
     /// because routing falls back to it.
     pub fn from_config(config: &Config) -> Self {
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-        providers.insert("console".to_string(), Arc::new(ConsoleProvider));
+        let console_templates = config
+            .providers
+            .console
+            .as_ref()
+            .and_then(|c| template::Templates::load("console", &c.template));
+        providers.insert(
+            "console".to_string(),
+            Arc::new(ConsoleProvider::new().with_templates(console_templates)),
+        );
         if let Some(slack) = &config.providers.slack {
             providers.insert(
                 "slack".to_string(),
-                Arc::new(SlackProvider::new(slack.webhook_url.clone())),
+                Arc::new(
+                    SlackProvider::new(slack.webhook_url.clone())
+                        .with_templates(template::Templates::load("slack", &slack.template)),
+                ),
             );
         }
         if let Some(webhook) = &config.providers.webhook {
             providers.insert(
                 "webhook".to_string(),
-                Arc::new(WebhookProvider::new(webhook.url.clone())),
+                Arc::new(
+                    WebhookProvider::new(webhook.url.clone())
+                        .with_templates(template::Templates::load("webhook", &webhook.template)),
+                ),
             );
         }
         if let Some(pagerduty) = &config.providers.pagerduty {
             providers.insert(
                 "pagerduty".to_string(),
-                Arc::new(PagerDutyProvider::new(
-                    pagerduty.routing_key.clone(),
-                    pagerduty.url.clone(),
-                )),
+                Arc::new(
+                    PagerDutyProvider::new(pagerduty.routing_key.clone(), pagerduty.url.clone())
+                        .with_templates(template::Templates::load(
+                            "pagerduty",
+                            &pagerduty.template,
+                        )),
+                ),
             );
         }
         if let Some(teams) = &config.providers.teams {
             providers.insert(
                 "teams".to_string(),
-                Arc::new(TeamsProvider::new(teams.webhook_url.clone())),
+                Arc::new(
+                    TeamsProvider::new(teams.webhook_url.clone())
+                        .with_templates(template::Templates::load("teams", &teams.template)),
+                ),
             );
         }
         if let Some(opsgenie) = &config.providers.opsgenie {
             providers.insert(
                 "opsgenie".to_string(),
-                Arc::new(OpsgenieProvider::new(
-                    opsgenie.api_key.clone(),
-                    opsgenie.url.clone(),
-                    opsgenie.tags.clone(),
-                )),
+                Arc::new(
+                    OpsgenieProvider::new(
+                        opsgenie.api_key.clone(),
+                        opsgenie.url.clone(),
+                        opsgenie.tags.clone(),
+                    )
+                    .with_templates(template::Templates::load("opsgenie", &opsgenie.template)),
+                ),
             );
         }
         if let Some(email) = &config.providers.email {
@@ -100,6 +124,39 @@ impl Pipeline {
             routing: config.routing(),
             providers,
         }
+    }
+
+    /// What each provider `signal` routes to would be sent, in plan
+    /// order, without sending anything or recording the signal; with
+    /// `only`, just that provider whether or not a route picks it. A
+    /// provider that can't show its payload has `None`.
+    pub fn preview(
+        &self,
+        signal: &Signal,
+        only: Option<&str>,
+    ) -> Result<Vec<(String, Option<serde_json::Value>)>, SignalError> {
+        let names: Vec<String> = match only {
+            Some(name) => vec![name.to_string()],
+            None => self.routing.plan(signal).providers().cloned().collect(),
+        };
+        names
+            .into_iter()
+            .map(|name| match self.providers.get(&name) {
+                Some(provider) => {
+                    let payload = provider.preview(signal);
+                    Ok((name, payload))
+                }
+                None => {
+                    let mut known: Vec<&String> = self.providers.keys().collect();
+                    known.sort();
+                    let known: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
+                    Err(SignalError::Config(format!(
+                        "provider '{name}' is not configured (configured: {})",
+                        known.join(", ")
+                    )))
+                }
+            })
+            .collect()
     }
 }
 

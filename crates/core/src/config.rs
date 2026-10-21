@@ -17,6 +17,7 @@
 use crate::routing::{Route, RoutingConfig};
 use crate::signal::SignalError;
 use crate::source::{self, ConfigSource, LoadOptions};
+use crate::template::{TemplateConfig, Templates};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -157,23 +158,54 @@ pub struct ProvidersConfig {
     pub email: Option<EmailConfig>,
 }
 
+impl ProvidersConfig {
+    /// Compiles every provider's templates once, so a mistake in one is
+    /// a load-time error rather than a fallback at send time.
+    fn check_templates(&self) -> Result<(), SignalError> {
+        let all: [(&'static str, Option<&TemplateConfig>); 7] = [
+            ("console", self.console.as_ref().map(|c| &c.template)),
+            ("slack", self.slack.as_ref().map(|c| &c.template)),
+            ("webhook", self.webhook.as_ref().map(|c| &c.template)),
+            ("pagerduty", self.pagerduty.as_ref().map(|c| &c.template)),
+            ("teams", self.teams.as_ref().map(|c| &c.template)),
+            ("opsgenie", self.opsgenie.as_ref().map(|c| &c.template)),
+            ("email", self.email.as_ref().map(|c| &c.template)),
+        ];
+        for (name, template) in all {
+            if let Some(template) = template {
+                Templates::compile(name, template)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsoleConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlackConfig {
     pub webhook_url: String,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookConfig {
     pub url: String,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -185,6 +217,9 @@ pub struct PagerDutyConfig {
     /// `https://events.eu.pagerduty.com/v2/enqueue`.
     #[serde(default)]
     pub url: Option<String>,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,6 +227,9 @@ pub struct PagerDutyConfig {
 pub struct TeamsConfig {
     /// Workflows (or legacy incoming) webhook URL of a Teams channel.
     pub webhook_url: String,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +245,9 @@ pub struct OpsgenieConfig {
     /// environment.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default)]
+    pub template: TemplateConfig,
 }
 
 /// Serialize as well, so a build without the AWS feature can hand the
@@ -230,6 +271,9 @@ pub struct EmailConfig {
     /// needs the `aws` add-on.
     #[serde(default)]
     pub ses: Option<SesConfig>,
+    /// Replaces parts of the message; see [`crate::template`].
+    #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
+    pub template: TemplateConfig,
 }
 
 /// How an [`EmailConfig`] sends.
@@ -421,8 +465,15 @@ impl Config {
         if let Some(email) = &config.providers.email {
             email.check()?;
         }
+        config.providers.check_templates()?;
         config.check_routes(&origins)?;
         Ok(config)
+    }
+
+    /// Loads and merges `sources` once, resolving secret placeholders;
+    /// see [`crate::source`].
+    pub fn load(sources: &[ConfigSource], opts: &LoadOptions) -> Result<Self, SignalError> {
+        source::load_blocking(sources, opts).map(|l| l.config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, SignalError> {
@@ -966,5 +1017,69 @@ mod tests {
         );
         let err = missing.expect_err("missing $SIGNAL_CONFIG target");
         assert!(err.to_string().contains("not a file"));
+    }
+
+    #[test]
+    fn provider_templates_load_from_yaml() {
+        std::env::set_var("OPSSIGNAL_TEST_SLACK_TPL", "https://hooks.example.test/t");
+        let yaml = r#"
+providers:
+  slack:
+    webhook_url: "${OPSSIGNAL_TEST_SLACK_TPL}"
+    template:
+      text: |
+        {{ emoji }} *{{ title }}* in {{ environment | default("unknown") }}
+  pagerduty:
+    routing_key: k
+    template:
+      summary: "[{{ severity|upper }}] {{ title }}"
+"#;
+        let config = Config::from_yaml_str(yaml).expect("templates parse");
+        let slack = config.providers.slack.expect("slack");
+        assert_eq!(slack.webhook_url, "https://hooks.example.test/t");
+        assert!(slack.template["text"].starts_with("{{ emoji }} *{{ title }}*"));
+        assert_eq!(
+            config.providers.pagerduty.expect("pd").template["summary"],
+            "[{{ severity|upper }}] {{ title }}"
+        );
+    }
+
+    #[test]
+    fn template_mistakes_stop_the_load() {
+        for (yaml, expect) in [
+            (
+                "providers:\n  teams:\n    webhook_url: u\n    template:\n      body: x\n",
+                "providers.teams.template.body",
+            ),
+            (
+                "providers:\n  console:\n    template:\n      text: \"{{ titel }}\"\n",
+                "unknown variable titel",
+            ),
+            (
+                "providers:\n  webhook:\n    url: u\n    template:\n      body: \"{% if %}\"\n",
+                "providers.webhook.template.body",
+            ),
+        ] {
+            let err = Config::from_yaml_str(yaml).expect_err(expect);
+            assert!(err.to_string().contains(expect), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_team_layer_can_restate_a_provider_with_its_own_template() {
+        let base = Layer::from_yaml_str(
+            "providers:\n  slack:\n    webhook_url: https://hooks.example.test/shared\n",
+        )
+        .expect("base");
+        let team = Layer::from_yaml_str(
+            "providers:\n  slack:\n    webhook_url: https://hooks.example.test/data\n    template:\n      text: \"[data] {{ title }}\"\n",
+        )
+        .expect("team");
+        let config =
+            Config::from_layers([(Some("base".into()), base), (Some("team".into()), team)])
+                .expect("merged");
+        let slack = config.providers.slack.expect("slack");
+        assert_eq!(slack.webhook_url, "https://hooks.example.test/data");
+        assert_eq!(slack.template["text"], "[data] {{ title }}");
     }
 }

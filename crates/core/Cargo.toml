@@ -42,6 +42,8 @@ object_store = { version = "0.14", default-features = false, optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
+# Jinja-syntax message templates (see template.rs).
+minijinja = { version = "2", default-features = false, features = ["builtins", "loader", "json", "serde"] }
 
 [features]
 default = []

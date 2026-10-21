@@ -1,6 +1,7 @@
 use crate::config::{EmailConfig, EmailTransport, SesConfig, SmtpConfig, SmtpTls};
 use crate::delivery::Provider;
 use crate::signal::{Signal, SignalError};
+use crate::template::{self, Templates};
 use lettre::message::{header::ContentType, Mailbox, MessageBuilder};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -18,24 +19,37 @@ const SMTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// inbox.
 pub struct EmailProvider {
     config: EmailConfig,
+    templates: Option<Templates>,
 }
 
 impl EmailProvider {
     pub fn new(config: EmailConfig) -> Self {
-        EmailProvider { config }
+        let templates = Templates::load("email", &config.template);
+        EmailProvider { config, templates }
     }
 
+    /// `subject_prefix` goes before a templated subject too, so mail
+    /// filters keep working. A subject is one line.
     fn subject_for(&self, signal: &Signal) -> String {
-        let severity = signal.severity.to_string().to_uppercase();
-        match &self.config.subject_prefix {
-            Some(prefix) if !prefix.is_empty() => {
-                format!("{prefix} [{severity}] {}", signal.title)
+        let subject = match template::render(&self.templates, "subject", signal, &[]) {
+            Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
+            None => {
+                let severity = signal.severity.to_string().to_uppercase();
+                format!("[{severity}] {}", signal.title)
             }
-            _ => format!("[{severity}] {}", signal.title),
+        };
+        match &self.config.subject_prefix {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix} {subject}"),
+            _ => subject,
         }
     }
 
-    fn body_for(signal: &Signal) -> String {
+    fn body_for(&self, signal: &Signal) -> String {
+        template::render(&self.templates, "body", signal, &[])
+            .unwrap_or_else(|| Self::default_body_for(signal))
+    }
+
+    fn default_body_for(signal: &Signal) -> String {
         let mut body = format!("{}\n", signal.title);
         if let Some(message) = &signal.message {
             body.push('\n');
@@ -96,7 +110,7 @@ impl EmailProvider {
             builder = builder.in_reply_to(thread.clone()).references(thread);
         }
         builder
-            .body(Self::body_for(signal))
+            .body(self.body_for(signal))
             .map_err(|e| SignalError::Delivery(format!("cannot build the email: {e}")))
     }
 
@@ -135,6 +149,13 @@ fn thread_id(dedup_key: &str) -> String {
 impl Provider for EmailProvider {
     fn name(&self) -> &'static str {
         "email"
+    }
+
+    fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "subject": self.subject_for(signal),
+            "body": self.body_for(signal),
+        }))
     }
 
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
@@ -215,6 +236,7 @@ mod tests {
                 tls: SmtpTls::None,
             }),
             ses: None,
+            template: Default::default(),
         }
     }
 
@@ -283,7 +305,7 @@ mod tests {
     #[test]
     fn body_lists_the_signal_fields() {
         let signal = signal(Severity::Error);
-        let body = EmailProvider::body_for(&signal);
+        let body = EmailProvider::default_body_for(&signal);
         assert!(body.starts_with("dbt model failed\n\nmodel orders timed out\n"));
         assert!(body.contains("Severity:       error\n"));
         assert!(body.contains("Environment:    prod\n"));
@@ -420,5 +442,27 @@ mod tests {
         );
         let sent: Signal = serde_json::from_str(signal_json).expect("signal json");
         assert_eq!(sent.id, signal.id);
+    }
+
+    #[test]
+    fn subject_and_body_templates_keep_the_prefix() {
+        let mut config = config(25);
+        config.template = [
+            (
+                "subject",
+                "{{ environment|upper }} {{ title }}\n(ignored line break)",
+            ),
+            ("body", "{{ title }}\nRun: {{ metadata.dag }}"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let provider = EmailProvider::new(config);
+        let signal = signal(Severity::Error);
+        assert_eq!(
+            provider.subject_for(&signal),
+            "[opssignal] PROD dbt model failed (ignored line break)"
+        );
+        assert_eq!(provider.body_for(&signal), "dbt model failed\nRun: daily");
     }
 }

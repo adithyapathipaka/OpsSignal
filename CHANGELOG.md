@@ -15,6 +15,21 @@ the next tag.
 
 ### Added
 
+- **Message templates per provider:** an optional `template` block under any
+  provider replaces parts of its message with Jinja text, such as Slack's
+  `text`, PagerDuty's `summary`, Teams' `title`/`text`, Opsgenie's
+  `message`/`description`, email's `subject`/`body`, console's line, or the
+  whole webhook JSON `body`. Templates see every signal field plus
+  `metadata.*`. Syntax errors, unknown parts and unknown variables fail at
+  load time; a template that fails at send time falls back to the built-in
+  format, so the alert still goes out. Configs without templates send
+  exactly what they did before. Python and the C library get this from the
+  config, with no API change
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
+- `opssignal preview` prints what each provider would be sent for a signal,
+  without sending or recording it, and `opssignal notify`/`preview` take
+  `--metadata` as a JSON object
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
 - **Dedup and rate limits per route:** `dedup: 30m` sends each incident (dedup
   key) at most once per window, and `rate_limit: {max: 10, per: 1h}` caps how
   many signals a route sends. Held-back signals are stored with status
@@ -24,19 +39,22 @@ the next tag.
   suppressed signal and prints the reason
   ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
-### Fixed
-
-- An unknown key inside a route's `match` (such as `enviroment: prod`) is now
-  a load-time error. It used to be ignored, so the route matched every signal
-  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
-
 ### Changed
 
+- Rust API: `ConsoleProvider` is now a struct built with
+  `ConsoleProvider::new()`, and the `Provider` trait has a `preview` method
+  with a default, so existing implementations still compile.
 - PyPI pages for `opssignal`, `opssignal-aws`, `opssignal-gcp` and
   `opssignal-azure` get a project description, links, keywords and
   classifiers ([#25](https://github.com/adithyapathipaka/OpsSignal/pull/25)).
   PyPI fixes a version's metadata at its first upload, so this shows from
   the next release; the `1.0.0b1` pages stay without a description.
+
+### Fixed
+
+- An unknown key inside a route's `match` (such as `enviroment: prod`) is now
+  a load-time error. It used to be ignored, so the route matched every signal
+  ([#31](https://github.com/adithyapathipaka/OpsSignal/pull/31)).
 
 ## [1.0.0-beta.1] - 2026-10-20
 

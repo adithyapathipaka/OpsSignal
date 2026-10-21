@@ -307,6 +307,10 @@ storage:
 [Providers](providers.md) describes what each one sends and how to get its
 URL or key.
 
+!!! info "Added in v1.0.0-beta.2"
+    Any provider can also set `template`, which replaces parts of the
+    message it sends; see [Message templates](templates.md).
+
 Unknown provider keys are rejected, so a typo such as `slak:` fails at load
 time instead of silently dropping a provider.
 
@@ -546,6 +550,8 @@ These all stop the config from loading, and the message says which rule failed:
 - a `${store:...}` secret reference that is malformed, names an unknown store,
   or needs an extra that isn't installed
 - a route that references an unconfigured provider, or lists no providers
+- a provider `template` with a syntax error, a part that provider doesn't
+  have, or an unknown variable (see [Message templates](templates.md#mistakes-stop-the-load))
 - an `extends` that is not a path or a list of paths, forms a cycle, goes more
   than 8 files deep, or (from a remote file) names a local path
 - `SIGNAL_CONFIG` pointing at a path that is not a file, or using an

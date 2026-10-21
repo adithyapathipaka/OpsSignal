@@ -1,5 +1,6 @@
 use crate::delivery::Provider;
 use crate::signal::{Severity, Signal, SignalError};
+use crate::template::{self, Templates};
 
 /// Posts an Adaptive Card to a Microsoft Teams channel webhook. The
 /// message shape works with both Workflows (Power Automate) webhooks,
@@ -7,6 +8,7 @@ use crate::signal::{Severity, Signal, SignalError};
 pub struct TeamsProvider {
     pub webhook_url: String,
     client: reqwest::Client,
+    templates: Option<Templates>,
 }
 
 impl TeamsProvider {
@@ -14,7 +16,14 @@ impl TeamsProvider {
         TeamsProvider {
             webhook_url,
             client: reqwest::Client::new(),
+            templates: None,
         }
+    }
+
+    /// Uses `templates` for the parts they set; see [`crate::template`].
+    pub fn with_templates(mut self, templates: Option<Templates>) -> Self {
+        self.templates = templates;
+        self
     }
 
     /// Adaptive Card text colours.
@@ -27,16 +36,20 @@ impl TeamsProvider {
         }
     }
 
-    fn card_for(signal: &Signal) -> serde_json::Value {
+    fn card_for(&self, signal: &Signal) -> serde_json::Value {
+        let title = template::render(&self.templates, "title", signal, &[])
+            .unwrap_or_else(|| signal.title.clone());
+        let message = template::render(&self.templates, "text", signal, &[])
+            .or_else(|| signal.message.clone());
         let mut body = vec![serde_json::json!({
             "type": "TextBlock",
-            "text": signal.title,
+            "text": title,
             "weight": "bolder",
             "size": "medium",
             "color": Self::color_for(signal.severity),
             "wrap": true,
         })];
-        if let Some(message) = &signal.message {
+        if let Some(message) = message {
             body.push(serde_json::json!({
                 "type": "TextBlock",
                 "text": message,
@@ -98,11 +111,15 @@ impl Provider for TeamsProvider {
         "teams"
     }
 
+    fn preview(&self, signal: &Signal) -> Option<serde_json::Value> {
+        Some(self.card_for(signal))
+    }
+
     async fn send(&self, signal: &Signal) -> Result<(), SignalError> {
         let resp = self
             .client
             .post(&self.webhook_url)
-            .json(&Self::card_for(signal))
+            .json(&self.card_for(signal))
             .send()
             .await
             .map_err(|e| SignalError::Delivery(e.to_string()))?;
@@ -167,7 +184,7 @@ mod tests {
 
     #[test]
     fn card_has_title_message_facts_and_log_link() {
-        let card = TeamsProvider::card_for(&signal(Severity::Error));
+        let card = TeamsProvider::new(String::new()).card_for(&signal(Severity::Error));
         assert_eq!(card["type"], "message");
         let attachment = &card["attachments"][0];
         assert_eq!(
@@ -196,7 +213,7 @@ mod tests {
 
     #[test]
     fn minimal_signal_has_no_message_block_or_actions() {
-        let card = TeamsProvider::card_for(&Signal::from_input(SignalInput {
+        let card = TeamsProvider::new(String::new()).card_for(&Signal::from_input(SignalInput {
             source: "ci".into(),
             event_type: "build_failed".into(),
             title: "main is red".into(),
@@ -241,5 +258,25 @@ mod tests {
             .expect_err("403 must fail");
         assert!(matches!(err, SignalError::Delivery(_)));
         assert!(err.to_string().contains("403"));
+    }
+
+    #[test]
+    fn title_and_text_templates_replace_the_text_blocks() {
+        let provider = TeamsProvider::new(String::new()).with_templates(template::for_test(
+            "teams",
+            &[
+                ("title", "{{ severity|upper }}: {{ title }}"),
+                ("text", "{{ message }} - see {{ log_url }}"),
+            ],
+        ));
+        let card = provider.card_for(&signal(Severity::Error));
+        let body = &card["attachments"][0]["content"]["body"];
+        assert_eq!(body[0]["text"], "ERROR: dbt model failed");
+        assert_eq!(
+            body[1]["text"],
+            "model orders timed out - see https://logs.example.test/run/1"
+        );
+        // The facts are not templated.
+        assert!(facts(&card).contains(&("Source".to_string(), "airflow".to_string())));
     }
 }
