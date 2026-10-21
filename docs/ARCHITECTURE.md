@@ -78,7 +78,9 @@ sequenceDiagram
 ```
 
 `notify_sync` runs the same steps but blocks the caller until the result is
-known or the timeout expires.
+known or the timeout expires. `send` is the same call returning the signal's
+id and dedup key alongside the result; the Python `send()` and C
+`signal_send` are thin wrappers over it.
 
 A delivery plan is a list of targets, each an ordered list of providers. A
 `failover` route's providers join the one shared failover target; each

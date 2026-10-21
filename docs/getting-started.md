@@ -63,6 +63,54 @@ delays the task being monitored.
     interpreter exits are flushed for up to 5 seconds; call
     `opssignal.flush(timeout)` to wait at a point of your choosing.
 
+### Waiting for the result
+
+!!! info "Added in v1.0.0-beta.3"
+
+`opssignal.send()` takes the same arguments as `notify()` plus `timeout`
+(seconds, default 30), waits for delivery and tells you how it went. Use it
+when the caller has to know, such as a CI step that must fail if nobody was
+paged, or a script that logs where each alert went:
+
+```python
+import opssignal
+
+result = opssignal.send(
+    source="ci",
+    event_type="deploy_failed",
+    title="Deploy of orders-api failed",
+    severity="critical",
+    environment="prod",
+    timeout=10,
+)
+if not result.delivered:
+    for d in result.deliveries:
+        print(d.provider, d.status, d.error)
+```
+
+`result.status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `delivered` | Every provider the signal was routed to got it. |
+| `partial` | A [fan-out](configuration.md) route reached some providers but not all. |
+| `failed` | No provider got it, or the timeout ran out first. |
+| `skipped` | Every matching route held it back by `dedup` or `rate_limit`; `result.suppressed` says why. |
+| `grouped` | Held for a digest by a route's `group_by` or `group_wait`; `result.grouped` names the routes. The digest goes out after `group_wait` or on `flush()`. |
+
+The result also has `provider` (the providers that delivered, comma
+separated), `error`, `attempts`, `deliveries` (one entry per provider with
+`provider`, `status`, `error` and `attempts`), `suppressed`, `grouped`,
+`signal_id` (its row in the
+SQLite history) and `dedup_key` (the incident key, given or computed).
+`result.to_dict()` returns it all as plain dicts for logging or JSON.
+
+A failed delivery is reported in the result, not raised. `send()` raises
+`ValueError` for invalid input or timeout and `RuntimeError` when there is no
+usable config or the signal could not be recorded. Keep `notify()` in
+Airflow callbacks and other places where an alert must never slow the task
+down.
+
 ## dbt
 
 Report a run's failures after any dbt command. dbt writes
