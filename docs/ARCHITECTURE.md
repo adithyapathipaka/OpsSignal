@@ -259,7 +259,7 @@ via JNI/cgo. `crates/python` uses PyO3 macros directly, which is a different
 hand-rolled C ABI. Both wrap the same `opssignal-core` logic; neither contains
 business logic of its own.
 
-## What's deliberately out of scope (v0.1)
+## What's deliberately out of scope
 
 - Event bus / message queue semantics
 - Event sourcing, complex event processing

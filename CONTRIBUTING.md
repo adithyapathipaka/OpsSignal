@@ -89,6 +89,20 @@ docker compose build
 - Update `docs/ARCHITECTURE.md` if you're changing a documented decision
   (not just adding a new provider/sink, which doesn't need an architecture
   doc change).
+- Add a line under `## [Unreleased]` in `CHANGELOG.md` for any change a
+  user would notice (a feature, a config key, a behavior change, a fix).
+  Link the PR. CI-only and internal refactors don't need one.
+- When a PR adds a feature to an existing docs page, mark it with the
+  release it will ship in, so readers on an older version can tell it
+  isn't theirs yet:
+
+    ```markdown
+    !!! info "Added in v1.0.0-beta.2"
+        Routes can set `mode: fanout` ...
+    ```
+
+  Use the next version you expect to tag. If the release ends up with a
+  different number, the release PR fixes the notes.
 
 ## Security
 

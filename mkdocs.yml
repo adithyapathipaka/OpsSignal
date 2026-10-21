@@ -5,9 +5,14 @@ repo_url: https://github.com/adithyapathipaka/OpsSignal
 repo_name: adithyapathipaka/OpsSignal
 edit_uri: edit/main/docs/
 docs_dir: docs
+# CI copies the rustdoc output into docs/rust; its few .md license files are
+# not site pages.
+exclude_docs: |
+  rust/**/*.md
 
 theme:
   name: material
+  custom_dir: overrides
   features:
     - navigation.sections
     - navigation.top
@@ -33,8 +38,14 @@ nav:
   - Kubernetes: kubernetes.md
   - CLI: cli.md
   - Architecture: ARCHITECTURE.md
+  - Releases: changelog.md
   - Releasing: releasing.md
   - API reference: reference.md
+
+extra:
+  version:
+    provider: mike
+    default: latest
 
 markdown_extensions:
   - admonition
@@ -44,6 +55,9 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

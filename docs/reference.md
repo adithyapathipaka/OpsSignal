@@ -3,7 +3,9 @@
 The Rust API of `opssignal-core` is generated with `cargo doc` and published
 with this site:
 
-**[Open the opssignal-core API reference](https://adithyapathipaka.github.io/OpsSignal/rust/opssignal_core/)**
+<a href="../rust/opssignal_core/"><strong>Open the opssignal-core API reference</strong></a>
+
+The reference matches the docs version picked at the top of the page.
 
 The parts most callers need:
 

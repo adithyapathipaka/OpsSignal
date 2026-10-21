@@ -9,7 +9,10 @@ before it builds anything, so a release needs no version-bump commit:
 
 It rewrites the Cargo workspace version, opssignal-cli's exact pin on
 opssignal-core, the four pyproject.toml versions, opssignal's extras
-pins on its add-ons, and opssignal.__version__. Run
+pins on its add-ons, and opssignal.__version__. It also points the docs
+links that PyPI shows (the Documentation URL and the package READMEs) at
+that version's copy of the docs site, so a release links to the docs
+that match it rather than "latest". Run
 scripts/check_versions.py afterwards to confirm they all agree.
 
 A pre-release is X.Y.Z-alpha.N, -beta.N or -rc.N. Cargo takes that
@@ -40,6 +43,24 @@ EDITS = [
     ("python/opssignal/__init__.py", r'(?m)(^__version__ = ")[^"]+(")', 1, True),
 ]
 
+# Docs links PyPI shows. On main they point at the site root or latest/;
+# a release rewrites them to its own version (the mike version name is
+# the Cargo spelling). Any version already in the URL is replaced too.
+DOCS_URL = re.compile(
+    r"(https://adithyapathipaka\.github\.io/OpsSignal/)"
+    r"(?:(?:latest|\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)/)?"
+)
+DOCS_FILES = [
+    "python/pyproject.toml",
+    "python/addons/aws/pyproject.toml",
+    "python/addons/gcp/pyproject.toml",
+    "python/addons/azure/pyproject.toml",
+    "python/README.md",
+    "python/addons/aws/README.md",
+    "python/addons/gcp/README.md",
+    "python/addons/azure/README.md",
+]
+
 
 def python_version(version):
     """The PEP 440 spelling of a Cargo version: 1.0.0-beta.1 -> 1.0.0b1."""
@@ -67,6 +88,14 @@ def main():
             sys.exit(f"{path}: expected {count or 'some'} version(s) to set, found {n}")
         file.write_text(text)
         print(f"{path}: {n} set to {version}")
+
+    for path in DOCS_FILES:
+        file = ROOT / path
+        text, n = DOCS_URL.subn(rf"\g<1>{cargo}/", file.read_text())
+        if n == 0:
+            sys.exit(f"{path}: expected a docs link to set, found none")
+        file.write_text(text)
+        print(f"{path}: {n} docs link(s) set to {cargo}")
 
 
 if __name__ == "__main__":

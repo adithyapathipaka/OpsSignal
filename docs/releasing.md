@@ -35,6 +35,18 @@ In **Settings > Environments**, create five environments: `pypi`,
 **required reviewer** on each, so a pushed tag waits for your click before
 anything is uploaded (the Actions run lets you approve them all at once).
 
+### Docs site
+
+The docs are published by `.github/workflows/docs.yml` to the `gh-pages`
+branch, one copy per version (built with
+[mike](https://github.com/jimporter/mike)). The first run creates the
+branch. Then, in **Settings > Pages**, set **Source** to **Deploy from a
+branch**, branch `gh-pages`, folder `/ (root)`.
+
+To publish docs for a tag that was cut before versioned docs existed, run
+**Actions > Docs > Run workflow** on `main` with that tag, for example
+`v1.0.0-beta.1`.
+
 ### PyPI: trusted publishing
 
 The projects don't exist yet, so register a *pending* publisher for each one
@@ -77,7 +89,13 @@ crates.io only allows trusted publishing for crates that already exist.
 
 ## Cutting a release
 
-1. Tag the commit on `main` you want to release and push the tag:
+1. Open a PR that turns `## [Unreleased]` in `CHANGELOG.md` into
+   `## [X.Y.Z] - YYYY-MM-DD`, adds a fresh empty `## [Unreleased]` above
+   it, updates the compare links at the bottom, and checks that every
+   "Added in" note in `docs/` names this version. Merge it, so the tagged
+   commit's docs and changelog match the release.
+
+2. Tag the commit on `main` you want to release and push the tag:
 
     ```bash
     git tag v0.2.0
@@ -88,7 +106,10 @@ crates.io only allows trusted publishing for crates that already exist.
     `scripts/set_version.py` to write `0.2.0` into `Cargo.toml`
     (`[workspace.package]` and the `opssignal-core` pin in `crates/cli`),
     the four `pyproject.toml` files, the extras pins in
-    `python/pyproject.toml`, and `opssignal.__version__`, then
+    `python/pyproject.toml`, and `opssignal.__version__`. It also points
+    the docs links PyPI shows (each package's Documentation URL and
+    README) at that version's docs, for example
+    `https://adithyapathipaka.github.io/OpsSignal/0.2.0/`. Then
     `scripts/check_versions.py` confirms they all agree. You don't need a
     version-bump commit.
 
@@ -104,13 +125,18 @@ crates.io only allows trusted publishing for crates that already exist.
     keep their old version, so `main` doesn't show which version was last
     released; the tags do.
 
-2. Approve the `pypi-aws`, `pypi-gcp`, `pypi-azure`, `pypi` and
+3. Approve the `pypi-aws`, `pypi-gcp`, `pypi-azure`, `pypi` and
    `crates-io` deployments in the Actions run.
 
 The run uploads the three add-ons first, then `opssignal` (its extras pin
 the add-ons, so they must exist first), then `opssignal-core` and
 `opssignal-cli`, and finally creates a GitHub release with every wheel and
 sdist attached.
+
+The same tag also publishes that version's docs: the site gets a
+`X.Y.Z` (or `X.Y.Z-beta.N`) entry in its version picker, and if it is the
+highest tag, `latest` (what the site's home page opens) moves to it. Merges
+to `main` keep updating the `dev` version. This needs no approval.
 
 To build and test everything without publishing, run the workflow by hand
 from **Actions > Release > Run workflow**. Pull requests don't run it, to

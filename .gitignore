@@ -30,4 +30,5 @@ signal.yaml
 .DS_Store
 .idea
 
-uv.locksite/
+site/
+docs/rust/

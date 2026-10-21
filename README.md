@@ -4,12 +4,12 @@ A Rust-powered SDK for turning application and workflow events into structured,
 routed operational notifications — Slack, webhooks, and more, from a single
 event model.
 
-> **Status: early/alpha (v0.1 in progress).** This project currently has one
-> real, tested integration target: **Airflow**, via the Python bindings. A
-> basic CLI exists; Java and Go bindings and additional providers are designed
-> for (see `crates/ffi` and the architecture docs) but **not yet built**. If you're
-> evaluating this for production use today, it is an Airflow/dbt-shop tool —
-> not yet the generic "any backend application" SDK it aims to become.
+> **Status: beta (latest release v1.0.0-beta.1).** Config keys, the Python
+> API and the SQLite schema may still change before 1.0.0. The most-tested
+> integration targets are **Airflow** and **dbt**, via the Python bindings. A
+> CLI and a C ABI exist; Java and Go bindings are designed for (see
+> `crates/ffi` and the architecture docs) but **not yet built**. What changed
+> in each release is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What this is
 
@@ -82,13 +82,12 @@ the FFI panic-safety rules every binding must follow.
 
 ## Roadmap
 
-| Version | Scope |
+| Release | Scope |
 |---|---|
-| v0.1 (current) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI |
-| v0.2 | Dedup, retry/backoff tuning, Alertmanager provider |
-| v0.3 | Postgres sink |
-| v0.4 | Dagster + Prefect adapters |
-| v0.5+ | Java/Go bindings — **only if real external demand appears** |
+| v1.0.0-beta.1 (released) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI, C ABI |
+| Next beta | Fan-out delivery mode for routes |
+| Later | Dedup, retry/backoff tuning, Alertmanager provider; Postgres sink; Dagster + Prefect adapters |
+| Only on demand | Java/Go bindings — **only if real external demand appears** |
 
 Java and Go are explicitly **not** committed for any near-term release. The
 C ABI in `crates/ffi` is designed to make those bindings straightforward to

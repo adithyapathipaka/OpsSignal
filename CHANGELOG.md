@@ -1,0 +1,69 @@
+# Changelog
+
+All notable changes to OpsSignal are listed here, newest first. The format
+follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
+follow [Semantic Versioning](https://semver.org/). Pre-releases (`-beta.N`)
+may still change config keys, the Python API and the SQLite schema.
+
+The Python packages use PEP 440 spelling for the same version, so
+`1.0.0-beta.1` is `1.0.0b1` on PyPI.
+
+## [Unreleased]
+
+Changes merged to `main` that are not in a release yet. They will ship in
+the next tag.
+
+### Changed
+
+- PyPI pages for `opssignal`, `opssignal-aws`, `opssignal-gcp` and
+  `opssignal-azure` get a project description, links, keywords and
+  classifiers ([#25](https://github.com/adithyapathipaka/OpsSignal/pull/25)).
+  PyPI fixes a version's metadata at its first upload, so this shows from
+  the next release; the `1.0.0b1` pages stay without a description.
+
+## [1.0.0-beta.1] - 2026-10-20
+
+First public build, published to PyPI (`pip install --pre opssignal`) and
+crates.io (`opssignal-core`, `opssignal-cli`).
+
+### Added
+
+- **Providers:** Slack, Microsoft Teams, PagerDuty (Events API v2),
+  Opsgenie, email (SMTP, or Amazon SES with `opssignal[aws]`), generic
+  webhook and console. A route lists providers in order and delivery stops
+  at the first one that succeeds, so later providers are fallbacks. Each
+  provider gets up to 3 attempts with backoff.
+- **Config sources:** local file, `https://`, `s3://`, `gs://`, `az://`,
+  AWS AppConfig (`appconfig://`), Azure App Configuration
+  (`azappconfig://`), and DynamoDB, Firestore and Cosmos DB items.
+- **Live reload** every 60 seconds (`SIGNAL_CONFIG_REFRESH_SECS`); a broken
+  edit is logged and skipped. Remote configs are cached locally and used
+  when the source is unreachable.
+- **Layered configs** with `extends:` or a comma-separated `SIGNAL_CONFIG`
+  list: a platform default file plus per-team files.
+- **Secrets:** `${VAR}`, `${aws-sm:...}`, `${gcp-sm:...}` and
+  `${azure-kv:...}` references, cached in memory only.
+- **Reliability:** every signal is stored in SQLite as `pending` before
+  delivery, then marked `delivered` or `failed`. In-flight signals are
+  flushed on exit (Rust drop, Python `atexit`, C `signal_flush`).
+- **Python:** `notify()` with full signal context, an Airflow
+  `failure_callback`, and a dbt adapter (`run_results.json` or a
+  `dbtRunner` callback).
+- **CLI:** `opssignal notify`, which exits non-zero when an alert was not
+  delivered.
+- **C ABI** in `crates/ffi` for C hosts and future bindings.
+- **Packaging:** a cloud-free base package with `opssignal[aws]`, `[gcp]`,
+  `[azure]` and `[all]` extras, and matching cargo features for the CLI
+  and C library. abi3 wheels for Python 3.9+ on Linux (glibc and musl,
+  x86_64 and aarch64), Windows x86_64 and macOS arm64 (the macOS wheel was
+  added to `1.0.0b1` on 2026-10-21). The Rust crates need Rust 1.89+.
+
+### Known limitations
+
+- No fan-out: to send one signal to two places, use two routes.
+- Signals left `pending` or `failed` are kept but not redelivered later.
+- SQLite is the only sink; a team config file can add routes but not
+  remove inherited ones.
+
+[Unreleased]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...HEAD
+[1.0.0-beta.1]: https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1
