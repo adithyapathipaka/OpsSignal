@@ -26,7 +26,7 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 pub const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
 use config::{Config, SinkKind};
-use delivery::{DeliveryResult, DeliveryStatus, Provider, ProviderOutcome};
+use delivery::{DeliveryResult, DeliveryStatus, Provider, ProviderOutcome, SendReport};
 use group::{Added, Closed, Groups, Member};
 use inflight::InFlight;
 use lifecycle::{AlertBook, OpenAlert};
@@ -478,6 +478,14 @@ impl SignalClient {
         input: SignalInput,
         timeout: Duration,
     ) -> Result<DeliveryResult, SignalError> {
+        self.send(input, timeout).map(|report| report.result)
+    }
+
+    /// [`SignalClient::notify_sync`] that also returns the signal's id
+    /// and dedup key, for callers that need to refer to it afterwards.
+    /// The Python `send()` and C `signal_send` call this.
+    #[must_use = "check whether the signal was delivered"]
+    pub fn send(&self, input: SignalInput, timeout: Duration) -> Result<SendReport, SignalError> {
         signal::validate(&input)?;
         let pipeline = self.pipeline();
         let Prepared {
@@ -488,7 +496,13 @@ impl SignalClient {
         } = self.prepare(input, &pipeline);
         record(self.sink.as_ref(), &signal);
         if plan.targets.is_empty() {
-            return Ok(self.settle_unsent(&pipeline, &plan, signal, &mut admission));
+            let (signal_id, dedup_key) = (signal.id, signal.dedup_key.clone());
+            let result = self.settle_unsent(&pipeline, &plan, signal, &mut admission);
+            return Ok(SendReport {
+                signal_id,
+                dedup_key,
+                result,
+            });
         }
         self.hold(&pipeline, &plan, &signal, &mut admission, false);
         let tracker = Tracker::new(&signal, self.sink.as_ref(), prior_refs);
@@ -510,7 +524,11 @@ impl SignalClient {
         }
 
         self.sink.complete(&signal, &result)?;
-        Ok(result)
+        Ok(SendReport {
+            signal_id: signal.id,
+            dedup_key: signal.dedup_key.clone(),
+            result,
+        })
     }
 
     /// Stamps a validated input and plans its delivery. A trigger goes
@@ -979,6 +997,36 @@ mod tests {
             stored_rows(&db),
             vec![("delivered".to_string(), Some("console".to_string()))]
         );
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn send_reports_the_stored_signal_id_and_serializes_flat() {
+        let db = temp_db();
+        let yaml = format!("storage:\n  path: \"{db}\"\n");
+        let client = SignalClient::from_config(&Config::from_yaml_str(&yaml).expect("config"))
+            .expect("client");
+
+        let report = client
+            .send(input(Severity::Info), Duration::from_secs(5))
+            .expect("send");
+
+        let conn = rusqlite::Connection::open(&db).expect("open db");
+        let (id, key): (String, Option<String>) = conn
+            .query_row("SELECT id, dedup_key FROM signals", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .expect("row");
+        assert_eq!(report.signal_id.to_string(), id);
+        assert_eq!(report.dedup_key, key);
+        assert!(report.dedup_key.is_some(), "a dedup key is always computed");
+
+        let json = serde_json::to_value(&report).expect("serialize");
+        assert_eq!(json["signal_id"], id.as_str());
+        assert_eq!(json["status"], "delivered");
+        assert_eq!(json["provider"], "console");
+        assert_eq!(json["deliveries"][0]["provider"], "console");
+        assert_eq!(json["deliveries"][0]["status"], "delivered");
         let _ = std::fs::remove_file(&db);
     }
 

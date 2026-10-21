@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeliveryStatus {
     /// Recorded, delivery not finished yet. A row left in this state
     /// means the process exited before delivery completed.
@@ -72,6 +73,20 @@ impl DeliveryResult {
             grouped: Vec::new(),
         }
     }
+}
+
+/// What a blocking send returns: which signal was sent and how its
+/// delivery went. Serializes as one flat JSON object, the shape the C
+/// library's `signal_send` hands back.
+#[derive(Debug, Clone, Serialize)]
+pub struct SendReport {
+    /// The core-generated id the signal was stored under.
+    pub signal_id: uuid::Uuid,
+    /// The incident key: the caller's, or the one computed from the
+    /// signal. Keep it to resolve or deduplicate the incident later.
+    pub dedup_key: Option<String>,
+    #[serde(flatten)]
+    pub result: DeliveryResult,
 }
 
 /// How delivery to one provider went: `pending` while it runs, then

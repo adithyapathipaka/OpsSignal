@@ -35,6 +35,18 @@ opssignal.notify(
 )
 ```
 
+`notify()` returns right away and delivers in the background. To wait and
+see where the alert went, use `send()`, which takes the same arguments plus
+`timeout`:
+
+```python
+result = opssignal.send(source="ci", event_type="deploy_failed",
+                        title="Deploy failed", severity="critical", timeout=10)
+print(result.status)  # delivered, partial, failed, skipped or grouped
+for d in result.deliveries:
+    print(d.provider, d.status, d.error)
+```
+
 ## Airflow
 
 ```python

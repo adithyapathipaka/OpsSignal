@@ -78,20 +78,76 @@ where
 #[no_mangle]
 pub unsafe extern "C" fn signal_notify_async(json_ptr: *const c_char) -> CResult {
     guarded(|| {
-        if json_ptr.is_null() {
-            return Err("signal payload pointer is null".to_string());
-        }
-        let json_str = unsafe { CStr::from_ptr(json_ptr) }
-            .to_str()
-            .map_err(|e| format!("invalid UTF-8 in signal payload: {e}"))?;
-
-        let input: opssignal_core::signal::SignalInput =
-            serde_json::from_str(json_str).map_err(|e| format!("invalid signal JSON: {e}"))?;
-        opssignal_core::signal::validate(&input).map_err(|e| e.to_string())?;
-
+        let input = unsafe { parse_input(json_ptr) }?;
         client()?.notify_async(input);
         Ok(())
     })
+}
+
+/// Blocking send: delivers the signal, waiting up to `timeout_ms`, and
+/// writes how it went to `*result_json` as a JSON object:
+///
+/// ```json
+/// {"signal_id": "...", "dedup_key": "...", "status": "partial",
+///  "provider": "slack", "error": "pagerduty: ...", "attempts": 3,
+///  "deliveries": [{"provider": "slack", "status": "delivered",
+///                  "error": null, "attempts": 1}, ...],
+///  "suppressed": [], "grouped": []}
+/// ```
+///
+/// `status` is `delivered`, `partial`, `failed`, `skipped` or
+/// `grouped` (held for a digest that `signal_flush` or the route's
+/// `group_wait` sends). A failed
+/// delivery is a successful call: `success` is false only when there is
+/// no result (invalid input, no config, the signal could not be
+/// recorded), and `*result_json` is then null. Free a non-null
+/// `*result_json` with `signal_free_string`.
+///
+/// # Safety
+/// `json_ptr` follows the rules of [`signal_notify_async`].
+/// `result_json` must be null or point to writable storage for one
+/// pointer; a null `result_json` is reported as an error.
+#[no_mangle]
+pub unsafe extern "C" fn signal_send(
+    json_ptr: *const c_char,
+    timeout_ms: u64,
+    result_json: *mut *mut c_char,
+) -> CResult {
+    guarded(|| {
+        if result_json.is_null() {
+            return Err("result_json pointer is null".to_string());
+        }
+        unsafe { *result_json = std::ptr::null_mut() };
+        let input = unsafe { parse_input(json_ptr) }?;
+        let report = client()?
+            .send(input, Duration::from_millis(timeout_ms))
+            .map_err(|e| format!("signal not sent: {e}"))?;
+        let json = serde_json::to_string(&report)
+            .map_err(|e| format!("could not encode the delivery result: {e}"))?;
+        let json = CString::new(json).map_err(|e| format!("delivery result: {e}"))?;
+        unsafe { *result_json = json.into_raw() };
+        Ok(())
+    })
+}
+
+/// Reads and validates a signal JSON payload from C.
+///
+/// # Safety
+/// `json_ptr` must be null or a valid, null-terminated C string.
+unsafe fn parse_input(
+    json_ptr: *const c_char,
+) -> Result<opssignal_core::signal::SignalInput, String> {
+    if json_ptr.is_null() {
+        return Err("signal payload pointer is null".to_string());
+    }
+    let json_str = unsafe { CStr::from_ptr(json_ptr) }
+        .to_str()
+        .map_err(|e| format!("invalid UTF-8 in signal payload: {e}"))?;
+
+    let input: opssignal_core::signal::SignalInput =
+        serde_json::from_str(json_str).map_err(|e| format!("invalid signal JSON: {e}"))?;
+    opssignal_core::signal::validate(&input).map_err(|e| e.to_string())?;
+    Ok(input)
 }
 
 /// Sends the digests of any open groups (routes with `group_by` or
@@ -110,7 +166,8 @@ pub extern "C" fn signal_flush(timeout_ms: u64) -> CResult {
     })
 }
 
-/// Frees a string previously returned in a `CResult.error` field.
+/// Frees a string previously returned in a `CResult.error` field or
+/// through `signal_send`'s `result_json`.
 /// Every language binding MUST call this after reading the error,
 /// or the allocation leaks.
 ///
@@ -208,6 +265,26 @@ mod tests {
         assert!(take_error(notify(payload)).contains("title must not be empty"));
     }
 
+    fn send(bytes: &[u8], out: *mut *mut c_char) -> CResult {
+        let c = CString::new(bytes).expect("test payload has no interior null");
+        unsafe { signal_send(c.as_ptr(), 5_000, out) }
+    }
+
+    #[test]
+    fn send_with_null_result_pointer_is_an_error_not_a_crash() {
+        let payload = br#"{"source":"ci","event_type":"e","title":"t","severity":"info"}"#;
+        let result = send(payload, std::ptr::null_mut());
+        assert!(take_error(result).contains("result_json pointer is null"));
+    }
+
+    #[test]
+    fn send_with_invalid_payload_leaves_no_result() {
+        let mut out: *mut c_char = std::ptr::dangling_mut();
+        let result = send(b"{not json", &mut out);
+        assert!(take_error(result).contains("invalid signal JSON"));
+        assert!(out.is_null());
+    }
+
     #[test]
     fn unknown_action_in_json_is_an_error() {
         let payload = br#"{"dedup_key":"k","action":"close"}"#;
@@ -251,5 +328,23 @@ mod tests {
         let resolve = br#"{"dedup_key":"k","action":"resolve"}"#;
         assert!(notify(resolve).success);
         assert!(signal_flush(5_000).success);
+
+        let mut out: *mut c_char = std::ptr::null_mut();
+        let result = send(payload, &mut out);
+        assert!(result.success);
+        assert!(!out.is_null());
+        let json = unsafe { CStr::from_ptr(out) }
+            .to_str()
+            .expect("UTF-8")
+            .to_owned();
+        unsafe { signal_free_string(out) };
+        let report: serde_json::Value = serde_json::from_str(&json).expect("result is JSON");
+        assert_eq!(report["status"], "delivered");
+        assert_eq!(report["provider"], "console");
+        assert_eq!(report["deliveries"][0]["status"], "delivered");
+        assert!(report["signal_id"]
+            .as_str()
+            .is_some_and(|id| id.len() == 36));
+        assert!(report["dedup_key"].is_string());
     }
 }

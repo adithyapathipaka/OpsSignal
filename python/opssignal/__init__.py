@@ -4,7 +4,9 @@ Public API surface for v0.1:
     from opssignal import notify
     notify(source="airflow", event_type="task_failed", title="...", severity="warning")
 
-notify() returns before delivery finishes. Signals still in flight when
+notify() returns before delivery finishes. send() takes the same
+arguments plus timeout=, waits for delivery and returns a DeliveryResult
+with the overall status and each provider's outcome. Signals still in flight when
 the interpreter exits are flushed by an atexit hook (up to 5 seconds);
 call flush() yourself to wait at a point of your choosing. flush() also
 sends the digest of any group a grouped route is still holding.
@@ -21,7 +23,7 @@ opssignal.integrations.airflow.
 import atexit
 from typing import Any, Optional
 
-from opssignal._native import flush, notify
+from opssignal._native import DeliveryResult, ProviderResult, flush, notify, send
 
 atexit.register(flush)
 
@@ -78,5 +80,13 @@ def acknowledge(
     )
 
 
-__all__ = ["acknowledge", "flush", "notify", "resolve"]
+__all__ = [
+    "DeliveryResult",
+    "ProviderResult",
+    "acknowledge",
+    "flush",
+    "notify",
+    "resolve",
+    "send",
+]
 __version__ = "0.1.0"

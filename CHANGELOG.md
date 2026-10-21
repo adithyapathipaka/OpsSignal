@@ -40,6 +40,20 @@ the next tag.
   JSON, and the Airflow adapter gets `success_callback`, which resolves the
   task's failure alert. Signal JSON input may now leave out any field;
   validation reports the ones a signal needs.
+- **Delivery results in Python and C:** `opssignal.send()` takes the same
+  arguments as `notify()` plus `timeout`, waits for delivery and returns a
+  `DeliveryResult` with the overall status (`delivered`, `partial`, `failed`,
+  `skipped` or `grouped`), each provider's result, and the signal's id and dedup key.
+  The C library gets `signal_send(json, timeout_ms, &result_json)`, which
+  returns the same result as JSON. `notify()` and `signal_notify_async` are
+  unchanged and stay fire-and-forget. `send()` takes `action` too, so an
+  acknowledge or resolve can wait for its result. In Rust,
+  `SignalClient::send` returns the same `SendReport`.
+
+### Changed
+
+- Rust API: `DeliveryStatus` now serializes in lowercase (`"delivered"`),
+  matching the SQLite history and the CLI.
 
 ## [1.0.0-beta.2] - 2026-10-21
 
