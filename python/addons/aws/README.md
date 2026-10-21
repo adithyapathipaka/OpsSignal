@@ -9,7 +9,7 @@ pip install --pre 'opssignal[aws]'
 ```
 
 opssignal picks the add-on up by itself; there is nothing to import. See
-the [configuration docs](https://adithyapathipaka.github.io/OpsSignal/configuration/)
+the [configuration docs](https://adithyapathipaka.github.io/OpsSignal/latest/configuration/)
 for the URL forms and credentials each service uses.
 
 - Documentation: https://adithyapathipaka.github.io/OpsSignal/

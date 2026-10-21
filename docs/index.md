@@ -11,9 +11,10 @@ event model.
     bindings) exist but are young.
 
 !!! info "Which release has which feature"
-    These pages describe the current `main` branch. Everything shipped in
-    v1.0.0-beta.1 unless the section says otherwise: features added later
-    carry an **"Added in"** note naming the release that brings them.
+    Use the version picker at the top to read the docs for the release you
+    installed; `latest` is the newest release and `dev` is the unreleased
+    `main` branch. Within a version, features newer than v1.0.0-beta.1 carry
+    an **"Added in"** note naming the release that brings them.
     See [Releases](changelog.md) for what changed in each version.
 
 ## What it does
