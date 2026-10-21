@@ -333,6 +333,9 @@ A route can also set `mode`, which decides what its list of providers means:
 
 ### Delivery modes
 
+!!! info "Added in v1.0.0-beta.2"
+    `mode: fanout`. Before it, every route behaved as `failover`.
+
 **`failover`** (the default): the providers are tried in order and delivery
 **stops at the first one that succeeds**. Each provider gets up to 3 attempts
 with exponential backoff before the next one is tried. Later providers are
