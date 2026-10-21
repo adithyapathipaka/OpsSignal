@@ -680,6 +680,10 @@ with this site:</p>
 <td>A signal's <code>action</code>: <code>Trigger</code> (default), <code>Acknowledge</code> or <code>Resolve</code>. Added in v1.0.0-beta.3.</td>
 </tr>
 <tr>
+<td><code>SignalClient::send(SignalInput, Duration)</code></td>
+<td><code>notify_sync</code> that returns a <code>SendReport</code>: the signal's id and dedup key plus the <code>DeliveryResult</code>. Added in v1.0.0-beta.3.</td>
+</tr>
+<tr>
 <td><code>routing::DeliveryMode</code></td>
 <td>A route's <code>mode</code>: <code>Failover</code> (default) or <code>Fanout</code>.</td>
 </tr>
@@ -697,15 +701,38 @@ with this site:</p>
 </tr>
 </tbody>
 </table>
-<p>The Python API is <code>opssignal.notify()</code> and <code>opssignal.flush(timeout=5.0)</code>,
-plus the Airflow adapter; see <a href="../getting-started/">Getting started</a>.
+<p>The Python API is <code>opssignal.notify()</code>, <code>opssignal.send()</code> (blocking, returns
+a <code>DeliveryResult</code>; added in v1.0.0-beta.3) and
+<code>opssignal.flush(timeout=5.0)</code>, plus the Airflow adapter; see
+<a href="../getting-started/">Getting started</a>.
 <code>opssignal.acknowledge()</code> and <code>opssignal.resolve()</code> (added in v1.0.0-beta.3)
 act on an alert raised earlier; see <a href="../lifecycle/">Acknowledge and resolve</a>. The
 package flushes on interpreter exit by itself.</p>
-<p>The C library exports <code>signal_notify_async(json)</code>, <code>signal_flush(timeout_ms)</code>
-and <code>signal_free_string(ptr)</code>. The JSON may set <code>"action"</code> to <code>"acknowledge"</code>
-or <code>"resolve"</code> (added in v1.0.0-beta.3), with just a <code>dedup_key</code>. Call <code>signal_flush</code> before the host exits, or
-signals still being delivered are cut off (they stay recorded as <code>pending</code>).</p>
+<p>The C library exports:</p>
+<div class="highlight"><pre><span></span><code><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">success</span><span class="p">;</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">error</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">CResult</span><span class="p">;</span>
+
+<span class="n">CResult</span><span class="w"> </span><span class="nf">signal_notify_async</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">signal_json</span><span class="p">);</span>
+<span class="n">CResult</span><span class="w"> </span><span class="nf">signal_send</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">signal_json</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">timeout_ms</span><span class="p">,</span>
+<span class="w">                    </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">result_json</span><span class="p">);</span><span class="w">   </span><span class="cm">/* added in v1.0.0-beta.3 */</span>
+<span class="n">CResult</span><span class="w"> </span><span class="nf">signal_flush</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">timeout_ms</span><span class="p">);</span>
+<span class="kt">void</span><span class="w">    </span><span class="nf">signal_free_string</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">ptr</span><span class="p">);</span>
+</code></pre></div>
+<p><code>signal_json</code> is a signal object such as
+<code>{"source":"ci","event_type":"deploy_failed","title":"...","severity":"critical"}</code>.
+It may set <code>"action"</code> to <code>"acknowledge"</code> or <code>"resolve"</code> (added in
+v1.0.0-beta.3), with just a <code>dedup_key</code>.
+<code>signal_send</code> blocks until delivery finishes or <code>timeout_ms</code> runs out and
+sets <code>*result_json</code> to a JSON object with <code>signal_id</code>, <code>dedup_key</code>, <code>status</code>
+(<code>delivered</code>, <code>partial</code>, <code>failed</code>, <code>skipped</code> or <code>grouped</code>), <code>provider</code>,
+<code>error</code>, <code>attempts</code>, <code>deliveries</code> (one object per provider), <code>suppressed</code>
+and <code>grouped</code>. A
+failed delivery still returns <code>success = true</code>; <code>success</code> is false only when
+there is no result (invalid input, no config, the signal could not be
+recorded), and <code>*result_json</code> is then null. Free <code>error</code> and <code>*result_json</code>
+with <code>signal_free_string</code>. Call <code>signal_flush</code> before the host exits, or
+signals sent with <code>signal_notify_async</code> that are still being delivered are
+cut off (they stay recorded as <code>pending</code>) and open groups never send their
+digests.</p>
 
 
 

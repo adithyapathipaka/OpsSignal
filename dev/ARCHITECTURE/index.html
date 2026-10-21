@@ -1011,7 +1011,9 @@ invocation.</p>
     end
     Client-&gt;&gt;Sink: complete(signal, delivery result)</code></pre>
 <p><code>notify_sync</code> runs the same steps but blocks the caller until the result is
-known or the timeout expires.</p>
+known or the timeout expires. <code>send</code> is the same call returning the signal's
+id and dedup key alongside the result; the Python <code>send()</code> and C
+<code>signal_send</code> are thin wrappers over it.</p>
 <p>A delivery plan is a list of targets, each an ordered list of providers. A
 <code>failover</code> route's providers join the one shared failover target; each
 provider of a <code>fanout</code> route is a target of its own. Targets run concurrently

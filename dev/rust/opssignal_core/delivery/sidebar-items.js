@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DeliveryStatus"],"struct":["DeliveryResult","ProviderOutcome"],"trait":["Provider"]};
+window.SIDEBAR_ITEMS = {"enum":["DeliveryStatus"],"struct":["DeliveryResult","ProviderOutcome","SendReport"],"trait":["Provider"]};

@@ -373,6 +373,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Python and Airflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#waiting-for-the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for the result
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -721,6 +738,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Python and Airflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#waiting-for-the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for the result
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -829,6 +863,70 @@ delays the task being monitored.</p>
 interpreter exits are flushed for up to 5 seconds; call
 <code>opssignal.flush(timeout)</code> to wait at a point of your choosing.</p>
 </div>
+<h3 id="waiting-for-the-result">Waiting for the result<a class="headerlink" href="#waiting-for-the-result" title="Permanent link">&para;</a></h3>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.3</p>
+</div>
+<p><code>opssignal.send()</code> takes the same arguments as <code>notify()</code> plus <code>timeout</code>
+(seconds, default 30), waits for delivery and tells you how it went. Use it
+when the caller has to know, such as a CI step that must fail if nobody was
+paged, or a script that logs where each alert went:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">opssignal</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">opssignal</span><span class="o">.</span><span class="n">send</span><span class="p">(</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"ci"</span><span class="p">,</span>
+    <span class="n">event_type</span><span class="o">=</span><span class="s2">"deploy_failed"</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s2">"Deploy of orders-api failed"</span><span class="p">,</span>
+    <span class="n">severity</span><span class="o">=</span><span class="s2">"critical"</span><span class="p">,</span>
+    <span class="n">environment</span><span class="o">=</span><span class="s2">"prod"</span><span class="p">,</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">result</span><span class="o">.</span><span class="n">delivered</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">deliveries</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">provider</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">status</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">error</span><span class="p">)</span>
+</code></pre></div>
+<p><code>result.status</code> is one of:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>delivered</code></td>
+<td>Every provider the signal was routed to got it.</td>
+</tr>
+<tr>
+<td><code>partial</code></td>
+<td>A <a href="../configuration/">fan-out</a> route reached some providers but not all.</td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td>No provider got it, or the timeout ran out first.</td>
+</tr>
+<tr>
+<td><code>skipped</code></td>
+<td>Every matching route held it back by <code>dedup</code> or <code>rate_limit</code>; <code>result.suppressed</code> says why.</td>
+</tr>
+<tr>
+<td><code>grouped</code></td>
+<td>Held for a digest by a route's <code>group_by</code> or <code>group_wait</code>; <code>result.grouped</code> names the routes. The digest goes out after <code>group_wait</code> or on <code>flush()</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The result also has <code>provider</code> (the providers that delivered, comma
+separated), <code>error</code>, <code>attempts</code>, <code>deliveries</code> (one entry per provider with
+<code>provider</code>, <code>status</code>, <code>error</code> and <code>attempts</code>), <code>suppressed</code>, <code>grouped</code>,
+<code>signal_id</code> (its row in the
+SQLite history) and <code>dedup_key</code> (the incident key, given or computed).
+<code>result.to_dict()</code> returns it all as plain dicts for logging or JSON.</p>
+<p>A failed delivery is reported in the result, not raised. <code>send()</code> raises
+<code>ValueError</code> for invalid input or timeout and <code>RuntimeError</code> when there is no
+usable config or the signal could not be recorded. Keep <code>notify()</code> in
+Airflow callbacks and other places where an alert must never slow the task
+down.</p>
 <h2 id="dbt">dbt<a class="headerlink" href="#dbt" title="Permanent link">&para;</a></h2>
 <p>Report a run's failures after any dbt command. dbt writes
 <code>target/run_results.json</code> on every run, so this works with dbt Core, dbt Fusion

@@ -603,6 +603,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -632,7 +643,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Changed
@@ -808,6 +819,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -837,7 +859,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Changed
@@ -960,6 +982,20 @@ the next tag.</p>
   JSON, and the Airflow adapter gets <code>success_callback</code>, which resolves the
   task's failure alert. Signal JSON input may now leave out any field;
   validation reports the ones a signal needs.</li>
+<li><strong>Delivery results in Python and C:</strong> <code>opssignal.send()</code> takes the same
+  arguments as <code>notify()</code> plus <code>timeout</code>, waits for delivery and returns a
+  <code>DeliveryResult</code> with the overall status (<code>delivered</code>, <code>partial</code>, <code>failed</code>,
+  <code>skipped</code> or <code>grouped</code>), each provider's result, and the signal's id and dedup key.
+  The C library gets <code>signal_send(json, timeout_ms, &amp;result_json)</code>, which
+  returns the same result as JSON. <code>notify()</code> and <code>signal_notify_async</code> are
+  unchanged and stay fire-and-forget. <code>send()</code> takes <code>action</code> too, so an
+  acknowledge or resolve can wait for its result. In Rust,
+  <code>SignalClient::send</code> returns the same <code>SendReport</code>.</li>
+</ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rust API: <code>DeliveryStatus</code> now serializes in lowercase (<code>"delivered"</code>),
+  matching the SQLite history and the CLI.</li>
 </ul>
 <h2 id="100-beta2-2026-10-21"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2">1.0.0-beta.2</a> - 2026-10-21<a class="headerlink" href="#100-beta2-2026-10-21" title="Permanent link">&para;</a></h2>
 <p>Second beta: send one signal to several places at once, shape each
@@ -998,7 +1034,7 @@ a route's <code>match</code> is now reported instead of silently matching everyt
   suppressed signal and prints the reason
   (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/31">#31</a>).</li>
 </ul>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Rust API: <code>ConsoleProvider</code> is now a struct built with
   <code>ConsoleProvider::new()</code>, the <code>Provider</code> trait has a <code>preview</code> method
