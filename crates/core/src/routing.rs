@@ -1,7 +1,11 @@
 use crate::signal::{Severity, Signal};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
+// Unknown keys are rejected: a typo such as `enviroment: prod` would
+// otherwise be ignored and leave a match that every signal passes.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouteMatch {
     #[serde(default)]
     pub severity: Vec<Severity>,
@@ -34,6 +38,96 @@ pub struct Route {
     pub providers: Vec<String>,
     #[serde(default)]
     pub mode: DeliveryMode,
+    /// Sends a signal through this route at most once per window for
+    /// each dedup key; repeats inside the window are suppressed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedup: Option<Window>,
+    /// Caps how many signals this route sends, whatever their key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
+}
+
+impl Route {
+    /// Whether the route keeps any dedup or rate-limit state.
+    pub fn is_throttled(&self) -> bool {
+        self.dedup.is_some() || self.rate_limit.is_some()
+    }
+
+    /// The route's providers, as `[slack, pagerduty]`, for messages.
+    pub fn describe(&self) -> String {
+        format!("[{}]", self.providers.join(", "))
+    }
+}
+
+/// At most `max` signals per `per`, counted over a sliding window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub max: u32,
+    pub per: Window,
+}
+
+/// A length of time written as a number and a unit: `30s`, `10m`,
+/// `2h` or `1d`. A bare number is seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window(pub Duration);
+
+impl std::str::FromStr for Window {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+        let (num, unit) = s.split_at(split);
+        let n: u64 = num
+            .parse()
+            .map_err(|_| format!("invalid duration {s:?}; expected e.g. 30s, 10m, 2h or 1d"))?;
+        let secs = match unit.trim() {
+            "" | "s" => 1,
+            "m" => 60,
+            "h" => 3600,
+            "d" => 86400,
+            other => {
+                return Err(format!(
+                    "invalid duration unit {other:?} in {s:?}; expected s, m, h or d"
+                ))
+            }
+        };
+        Ok(Window(Duration::from_secs(n.saturating_mul(secs))))
+    }
+}
+
+impl std::fmt::Display for Window {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let secs = self.0.as_secs();
+        let (n, unit) = [(86400, "d"), (3600, "h"), (60, "m")]
+            .into_iter()
+            .find(|(size, _)| secs > 0 && secs.is_multiple_of(*size))
+            .map(|(size, unit)| (secs / size, unit))
+            .unwrap_or((secs, "s"));
+        write!(f, "{n}{unit}")
+    }
+}
+
+impl<'de> Deserialize<'de> for Window {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Secs(u64),
+            Text(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Secs(n) => Ok(Window(Duration::from_secs(n))),
+            Raw::Text(s) => s.parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl Serialize for Window {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,6 +141,10 @@ pub struct RoutingConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryPlan {
     pub targets: Vec<Vec<String>>,
+    /// Why matching routes were held back by their `dedup` or
+    /// `rate_limit`, one line per route. Only [`RoutingConfig::plan_with`]
+    /// fills it.
+    pub suppressed: Vec<String>,
 }
 
 impl DeliveryPlan {
@@ -97,6 +195,21 @@ impl RoutingConfig {
     /// architecture review: "unmatched signals always hit console at
     /// minimum."
     pub fn plan(&self, signal: &Signal) -> DeliveryPlan {
+        self.plan_with(signal, |_| Ok(()))
+    }
+
+    /// [`RoutingConfig::plan`] that first asks `admit` about each
+    /// matching route that sets `dedup` or `rate_limit`. A route it
+    /// turns down (with the reason) adds no providers.
+    ///
+    /// Unlike `plan`, this can return no targets: when routes matched
+    /// and every one of them was suppressed. That is a decision the
+    /// config asked for, not a signal that matched nothing, so it does
+    /// not fall back to console; `suppressed` says why.
+    pub fn plan_with<F>(&self, signal: &Signal, mut admit: F) -> DeliveryPlan
+    where
+        F: FnMut(&Route) -> Result<(), String>,
+    {
         // A provider named by several matching routes is used once, at
         // its first position, so it never gets the same signal twice and
         // a failing provider is not retried again later in the same
@@ -104,7 +217,14 @@ impl RoutingConfig {
         let mut seen: Vec<&String> = Vec::new();
         let mut targets: Vec<Vec<String>> = Vec::new();
         let mut failover: Option<usize> = None;
+        let mut suppressed = Vec::new();
         for route in self.routes.iter().filter(|r| r.match_rule.matches(signal)) {
+            if route.is_throttled() {
+                if let Err(reason) = admit(route) {
+                    suppressed.push(format!("route {}: {reason}", route.describe()));
+                    continue;
+                }
+            }
             for name in &route.providers {
                 if seen.contains(&name) {
                     continue;
@@ -121,10 +241,13 @@ impl RoutingConfig {
             }
         }
 
-        if targets.is_empty() {
+        if targets.is_empty() && suppressed.is_empty() {
             targets.push(vec!["console".to_string()]);
         }
-        DeliveryPlan { targets }
+        DeliveryPlan {
+            targets,
+            suppressed,
+        }
     }
 }
 
@@ -155,6 +278,8 @@ mod tests {
                 },
                 providers: vec!["slack".into()],
                 mode: DeliveryMode::Failover,
+                dedup: None,
+                rate_limit: None,
             }],
         };
         let signal = sample_signal(Severity::Info, "dev");
@@ -172,6 +297,8 @@ mod tests {
                 },
                 providers: vec!["slack".into()],
                 mode: DeliveryMode::Failover,
+                dedup: None,
+                rate_limit: None,
             }],
         };
         let signal = sample_signal(Severity::Error, "prod");
@@ -192,6 +319,8 @@ mod tests {
             },
             providers: providers.iter().map(|p| p.to_string()).collect(),
             mode: DeliveryMode::Failover,
+            dedup: None,
+            rate_limit: None,
         }
     }
 
@@ -379,6 +508,88 @@ mod tests {
         assert!(bad_mode.is_err());
         let typo: Result<Vec<Route>, _> =
             serde_yaml::from_str("- match: {}\n  providers: [slack]\n  mod: fanout\n");
+        assert!(typo.is_err());
+    }
+
+    #[test]
+    fn plan_with_skips_routes_the_gate_turns_down() {
+        let mut limited = fanout(route(&[], None, None, &["pagerduty", "slack"]));
+        limited.dedup = Some("10m".parse().expect("window"));
+        let config = RoutingConfig {
+            routes: vec![limited, route(&[], None, None, &["teams", "slack"])],
+        };
+        let plan = config.plan_with(&sample_signal(Severity::Error, "prod"), |_| {
+            Err("duplicate".to_string())
+        });
+        // slack is still sent, now from the failover route.
+        assert_eq!(plan.targets, names(&[&["teams", "slack"]]));
+        assert_eq!(
+            plan.suppressed,
+            vec!["route [pagerduty, slack]: duplicate".to_string()]
+        );
+    }
+
+    #[test]
+    fn gate_is_asked_only_about_throttled_routes() {
+        let mut limited = route(&[], None, None, &["pagerduty"]);
+        limited.rate_limit = Some(RateLimit {
+            max: 1,
+            per: "1m".parse().expect("window"),
+        });
+        let config = RoutingConfig {
+            routes: vec![route(&[], None, None, &["slack"]), limited],
+        };
+        let mut asked = Vec::new();
+        let plan = config.plan_with(&sample_signal(Severity::Error, "prod"), |r| {
+            asked.push(r.providers.clone());
+            Ok(())
+        });
+        assert_eq!(asked, vec![vec!["pagerduty".to_string()]]);
+        assert_eq!(plan.targets, names(&[&["slack", "pagerduty"]]));
+    }
+
+    #[test]
+    fn every_matching_route_suppressed_gives_an_empty_plan_not_console() {
+        let mut limited = route(&[Severity::Error], None, None, &["pagerduty"]);
+        limited.dedup = Some("1m".parse().expect("window"));
+        let config = RoutingConfig {
+            routes: vec![limited],
+        };
+        let plan = config.plan_with(&sample_signal(Severity::Error, "prod"), |_| {
+            Err("rate limited".to_string())
+        });
+        assert!(plan.targets.is_empty());
+        assert_eq!(plan.suppressed.len(), 1);
+        // A signal no route matches still goes to console.
+        let unmatched = config.plan_with(&sample_signal(Severity::Info, "prod"), |_| {
+            Err("never asked".to_string())
+        });
+        assert_eq!(unmatched.targets, names(&[&["console"]]));
+        assert!(unmatched.suppressed.is_empty());
+    }
+
+    #[test]
+    fn windows_parse_and_print() {
+        for (text, secs, shown) in [
+            ("30s", 30, "30s"),
+            ("90", 90, "90s"),
+            ("10m", 600, "10m"),
+            ("120m", 7200, "2h"),
+            ("1d", 86400, "1d"),
+        ] {
+            let w: Window = text.parse().expect(text);
+            assert_eq!(w.0, Duration::from_secs(secs));
+            assert_eq!(w.to_string(), shown);
+        }
+        for bad in ["", "m", "10 minutes", "-5m", "1.5h"] {
+            assert!(bad.parse::<Window>().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn unknown_match_key_is_rejected() {
+        let typo: Result<Vec<Route>, _> =
+            serde_yaml::from_str("- match: {enviroment: prod}\n  providers: [slack]\n");
         assert!(typo.is_err());
     }
 }

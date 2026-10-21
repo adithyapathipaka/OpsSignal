@@ -13,6 +13,7 @@ pub mod secrets;
 pub mod signal;
 pub mod sink;
 pub mod source;
+mod throttle;
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 200;
@@ -29,13 +30,14 @@ use providers::{
     pagerduty::PagerDutyProvider, slack::SlackProvider, teams::TeamsProvider,
     webhook::WebhookProvider,
 };
-use routing::DeliveryPlan;
+use routing::{DeliveryPlan, RoutingConfig};
 use signal::{Signal, SignalError, SignalInput};
 use sink::{SignalSink, SqliteSink};
 use source::{ConfigSource, LoadOptions};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+use throttle::{Admission, Throttle};
 
 /// The part of a client that a config reload replaces: the routing
 /// rules and the providers they name. Swapped as one unit, so a signal
@@ -115,6 +117,9 @@ type SharedPipeline = Arc<RwLock<Arc<Pipeline>>>;
 pub struct SignalClient {
     pub sink: Arc<dyn SignalSink>,
     pipeline: SharedPipeline,
+    /// Route `dedup` and `rate_limit` history. `None` if its table
+    /// could not be opened; routes then send without throttling.
+    throttle: Option<Arc<Throttle>>,
     in_flight: Arc<InFlight>,
     pub runtime: tokio::runtime::Runtime,
 }
@@ -178,9 +183,17 @@ impl SignalClient {
         let sink: Arc<dyn SignalSink> = match config.storage.sink {
             SinkKind::Sqlite => Arc::new(SqliteSink::open(&config.storage.path)?),
         };
+        let throttle = match Throttle::open(&config.storage.path) {
+            Ok(t) => Some(Arc::new(t)),
+            Err(e) => {
+                tracing::error!("{e}; dedup and rate limits are off");
+                None
+            }
+        };
         Ok(SignalClient {
             sink,
             pipeline: Arc::new(RwLock::new(Arc::new(Pipeline::from_config(config)))),
+            throttle,
             in_flight: Arc::default(),
             runtime,
         })
@@ -206,13 +219,17 @@ impl SignalClient {
         record(self.sink.as_ref(), &signal);
         let sink = Arc::clone(&self.sink);
         let pipeline = self.pipeline();
+        // Also on the caller's thread, so dedup sees signals in the
+        // order they were sent.
+        let (plan, admission) = plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
+        let throttle = self.throttle.clone();
         let guard = self.in_flight.start();
 
         self.runtime.spawn(async move {
             let _guard = guard;
             let tracker = Tracker::new(&signal, sink.as_ref());
-            let plan = pipeline.routing.plan(&signal);
             let result = deliver(&tracker, &plan, &pipeline.providers).await;
+            settle(throttle.as_deref(), &admission, &result);
             if let Err(e) = sink.complete(&signal, &result) {
                 tracing::error!("sink write failed: {e}");
             }
@@ -243,7 +260,7 @@ impl SignalClient {
         record(self.sink.as_ref(), &signal);
         let pipeline = self.pipeline();
         let tracker = Tracker::new(&signal, self.sink.as_ref());
-        let plan = pipeline.routing.plan(&signal);
+        let (plan, admission) = plan_signal(self.throttle.as_deref(), &pipeline.routing, &signal);
 
         let result = self.runtime.block_on(async {
             match tokio::time::timeout(timeout, deliver(&tracker, &plan, &pipeline.providers)).await
@@ -256,6 +273,7 @@ impl SignalClient {
                 ),
             }
         });
+        settle(self.throttle.as_deref(), &admission, &result);
 
         self.sink.complete(&signal, &result)?;
         Ok(result)
@@ -277,6 +295,34 @@ impl Drop for SignalClient {
 fn record(sink: &dyn SignalSink, signal: &Signal) {
     if let Err(e) = sink.record(signal) {
         tracing::error!("sink write failed, delivering anyway: {e}");
+    }
+}
+
+/// Plans a signal's delivery, holding back the routes whose `dedup` or
+/// `rate_limit` turn it down.
+fn plan_signal(
+    throttle: Option<&Throttle>,
+    routing: &RoutingConfig,
+    signal: &Signal,
+) -> (DeliveryPlan, Admission) {
+    let mut admission = Admission::default();
+    let now = throttle::now_ms();
+    let plan = routing.plan_with(signal, |route| match throttle {
+        Some(t) => t.admit(route, signal, now, &mut admission),
+        None => Ok(()),
+    });
+    for line in &plan.suppressed {
+        tracing::info!("signal {} suppressed on {line}", signal.id);
+    }
+    (plan, admission)
+}
+
+/// A signal that reached no provider must not count as sent, or its
+/// next occurrence would be suppressed as a duplicate of an alert
+/// nobody got.
+fn settle(throttle: Option<&Throttle>, admission: &Admission, result: &DeliveryResult) {
+    if let (Some(t), DeliveryStatus::Failed) = (throttle, result.status) {
+        t.release(admission);
     }
 }
 
@@ -441,7 +487,11 @@ fn summarize(
         deliveries.extend(tried);
     }
 
-    let status = if delivered.len() == plan.targets.len() {
+    let status = if plan.targets.is_empty() {
+        // Every matching route was suppressed; nothing was meant to go.
+        errors = plan.suppressed.clone();
+        DeliveryStatus::Skipped
+    } else if delivered.len() == plan.targets.len() {
         DeliveryStatus::Delivered
     } else if delivered.is_empty() {
         DeliveryStatus::Failed
@@ -454,6 +504,7 @@ fn summarize(
         error: (!errors.is_empty()).then(|| errors.join("; ")),
         attempts,
         deliveries,
+        suppressed: plan.suppressed.clone(),
     }
 }
 
@@ -613,6 +664,8 @@ mod tests {
                 },
                 providers: providers.iter().map(|p| p.to_string()).collect(),
                 mode,
+                dedup: None,
+                rate_limit: None,
             }],
         }
     }
@@ -1007,6 +1060,7 @@ mod tests {
                 routing,
                 providers: registry(providers),
             }))),
+            throttle: Some(Arc::new(Throttle::open(db).expect("open throttle"))),
             in_flight: Arc::default(),
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
@@ -1383,5 +1437,179 @@ mod tests {
             .err()
             .expect("unopenable sink must fail");
         assert!(matches!(err, SignalError::Sink(_)));
+    }
+
+    fn throttled(route: routing::Route, dedup: Option<&str>, rate: Option<&str>) -> routing::Route {
+        routing::Route {
+            dedup: dedup.map(|w| w.parse().expect("window")),
+            rate_limit: rate.map(|r| serde_yaml::from_str(r).expect("rate_limit")),
+            ..route
+        }
+    }
+
+    fn deduped(providers: &[&str], mode: routing::DeliveryMode) -> RoutingConfig {
+        let mut routing = route(providers, mode);
+        routing.routes[0] = throttled(routing.routes[0].clone(), Some("10m"), None);
+        routing
+    }
+
+    #[test]
+    fn dedup_sends_an_incident_once_per_window() {
+        let db = temp_db();
+        let pd = FlakyProvider::new("pagerduty", 0);
+        let client = client_with_routing(
+            vec![pd.clone()],
+            deduped(&["pagerduty"], routing::DeliveryMode::Failover),
+            &db,
+        );
+
+        let first = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("first");
+        assert_eq!(first.status, DeliveryStatus::Delivered);
+        assert!(first.suppressed.is_empty());
+
+        for _ in 0..5 {
+            let repeat = client
+                .notify_sync(input(Severity::Error), Duration::from_secs(5))
+                .expect("repeat");
+            assert_eq!(repeat.status, DeliveryStatus::Skipped);
+            assert!(repeat.deliveries.is_empty());
+            assert_eq!(repeat.suppressed.len(), 1);
+            let error = repeat.error.expect("reason");
+            assert!(
+                error.starts_with("route [pagerduty]: duplicate of a signal sent"),
+                "{error}"
+            );
+        }
+        assert_eq!(pd.calls(), 1);
+
+        // A different incident is not a duplicate.
+        let mut other = input(Severity::Error);
+        other.title = "another model failed".into();
+        let other = client
+            .notify_sync(other, Duration::from_secs(5))
+            .expect("other");
+        assert_eq!(other.status, DeliveryStatus::Delivered);
+        assert_eq!(pd.calls(), 2);
+
+        // Suppressed signals are still recorded.
+        let rows = stored_rows(&db);
+        assert_eq!(rows.len(), 7);
+        assert_eq!(
+            rows.iter()
+                .filter(|(status, _)| status == "skipped")
+                .count(),
+            5
+        );
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn suppressed_route_leaves_other_matching_routes_sending() {
+        let db = temp_db();
+        let pd = FlakyProvider::new("pagerduty", 0);
+        let slack = FlakyProvider::new("slack", 0);
+        let mut routing = deduped(&["pagerduty"], routing::DeliveryMode::Fanout);
+        routing.routes.push(
+            route(&["slack"], routing::DeliveryMode::Failover)
+                .routes
+                .remove(0),
+        );
+        let client = client_with_routing(vec![pd.clone(), slack.clone()], routing, &db);
+
+        for _ in 0..3 {
+            let _ = client
+                .notify_sync(input(Severity::Error), Duration::from_secs(5))
+                .expect("notify");
+        }
+        let last = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("notify");
+
+        assert_eq!(last.status, DeliveryStatus::Delivered);
+        assert_eq!(last.provider.as_deref(), Some("slack"));
+        assert_eq!(last.suppressed.len(), 1);
+        assert_eq!(pd.calls(), 1);
+        assert_eq!(slack.calls(), 4);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn rate_limit_caps_sends_across_incidents() {
+        let db = temp_db();
+        let pd = FlakyProvider::new("pagerduty", 0);
+        let mut routing = route(&["pagerduty"], routing::DeliveryMode::Failover);
+        routing.routes[0] = throttled(routing.routes[0].clone(), None, Some("{max: 3, per: 1h}"));
+        let client = client_with_routing(vec![pd.clone()], routing, &db);
+
+        let statuses: Vec<DeliveryStatus> = (0..10)
+            .map(|i| {
+                let mut signal = input(Severity::Error);
+                signal.title = format!("model {i} failed");
+                client
+                    .notify_sync(signal, Duration::from_secs(5))
+                    .expect("notify")
+                    .status
+            })
+            .collect();
+
+        assert_eq!(pd.calls(), 3);
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == DeliveryStatus::Skipped)
+                .count(),
+            7
+        );
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_failed_send_does_not_start_the_dedup_window() {
+        let db = temp_db();
+        // Fails all 3 attempts of the first signal, then recovers.
+        let pd = FlakyProvider::new("pagerduty", MAX_RETRY_ATTEMPTS);
+        let client = client_with_routing(
+            vec![pd.clone()],
+            deduped(&["pagerduty"], routing::DeliveryMode::Failover),
+            &db,
+        );
+
+        let first = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("first");
+        assert_eq!(first.status, DeliveryStatus::Failed);
+        let retry = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("retry");
+        assert_eq!(retry.status, DeliveryStatus::Delivered);
+        let repeat = client
+            .notify_sync(input(Severity::Error), Duration::from_secs(5))
+            .expect("repeat");
+        assert_eq!(repeat.status, DeliveryStatus::Skipped);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn notify_async_applies_dedup_too() {
+        let db = temp_db();
+        let pd = FlakyProvider::new("pagerduty", 0);
+        let client = client_with_routing(
+            vec![pd.clone()],
+            deduped(&["pagerduty"], routing::DeliveryMode::Failover),
+            &db,
+        );
+        for _ in 0..20 {
+            client.notify_async(input(Severity::Error));
+        }
+        assert!(client.flush(Duration::from_secs(5)));
+        assert_eq!(pd.calls(), 1);
+        drop(client);
+        let _ = std::fs::remove_file(&db);
     }
 }

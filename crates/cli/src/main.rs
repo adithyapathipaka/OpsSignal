@@ -80,10 +80,20 @@ fn main() {
                 }
             };
 
-            // Exit codes: 0 delivered, 1 delivery failed or only partly
-            // delivered, 2 bad input or config.
+            // Exit codes: 0 delivered or suppressed by a route's dedup or
+            // rate_limit, 1 delivery failed or only partly delivered, 2
+            // bad input or config.
             match client.notify_sync(input, NOTIFY_TIMEOUT) {
-                Ok(result) if result.status == DeliveryStatus::Delivered => {}
+                Ok(result)
+                    if matches!(
+                        result.status,
+                        DeliveryStatus::Delivered | DeliveryStatus::Skipped
+                    ) =>
+                {
+                    for line in &result.suppressed {
+                        eprintln!("suppressed: {line}");
+                    }
+                }
                 Ok(result) => {
                     let what = match result.status {
                         DeliveryStatus::Partial => "signal only partly delivered",

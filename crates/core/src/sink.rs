@@ -216,6 +216,7 @@ mod tests {
             error: Some("slack webhook returned status 500".into()),
             attempts: 3,
             deliveries: vec![],
+            suppressed: vec![],
         }
     }
 
@@ -283,6 +284,7 @@ mod tests {
             error: None,
             attempts: 1,
             deliveries: vec![],
+            suppressed: vec![],
         };
         sink.complete(&signal, &delivered).expect("complete");
 
@@ -388,6 +390,7 @@ mod tests {
                     outcome("slack", DeliveryStatus::Delivered, 1),
                     outcome("pagerduty", DeliveryStatus::Failed, 3),
                 ],
+                suppressed: vec![],
             },
         )
         .expect("complete");

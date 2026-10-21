@@ -485,6 +485,16 @@ impl Config {
             if route.providers.is_empty() {
                 return Err(config_err(format!("{at} lists no providers")));
             }
+            if route.dedup.is_some_and(|w| w.0.is_zero()) {
+                return Err(config_err(format!("{at}: dedup must be longer than 0s")));
+            }
+            if let Some(limit) = route.rate_limit {
+                if limit.max == 0 || limit.per.0.is_zero() {
+                    return Err(config_err(format!(
+                        "{at}: rate_limit needs max and per above 0"
+                    )));
+                }
+            }
             for name in &route.providers {
                 if !known.contains(&name.as_str()) {
                     return Err(config_err(format!(
@@ -576,6 +586,7 @@ fn interpolate_str(input: &str, secrets: &HashMap<String, String>) -> Result<Str
 mod tests {
     use super::*;
     use crate::signal::Severity;
+    use std::time::Duration;
 
     const EXAMPLE: &str = include_str!("../../../python/examples/signal.example.yaml");
 
@@ -644,6 +655,51 @@ mod tests {
     #[test]
     fn unterminated_placeholder_is_rejected() {
         assert!(interpolate_str("${NOPE", &HashMap::new()).is_err());
+    }
+
+    #[test]
+    fn route_dedup_and_rate_limit_parse() {
+        let yaml = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match: {}\n    providers: [webhook]\n    dedup: 10m\n    rate_limit:\n      max: 20\n      per: 1h\n  - match: {}\n    providers: [webhook]\n    dedup: 90\n";
+        let config = Config::from_yaml_str(yaml).expect("config");
+        let route = &config.routes[0];
+        assert_eq!(route.dedup.expect("dedup").0, Duration::from_secs(600));
+        let limit = route.rate_limit.expect("rate_limit");
+        assert_eq!((limit.max, limit.per.0), (20, Duration::from_secs(3600)));
+        assert_eq!(
+            config.routes[1].dedup.expect("dedup").0,
+            Duration::from_secs(90)
+        );
+    }
+
+    #[test]
+    fn bad_dedup_or_rate_limit_is_rejected() {
+        let base = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match: {}\n    providers: [webhook]\n";
+        for (extra, expect) in [
+            ("    dedup: 10 minutes\n", "invalid duration unit"),
+            ("    dedup: 0s\n", "dedup must be longer than 0s"),
+            (
+                "    rate_limit: {max: 0, per: 1m}\n",
+                "rate_limit needs max and per above 0",
+            ),
+            ("    rate_limit: {max: 5}\n", "missing field `per`"),
+            (
+                "    rate_limit: {max: 5, per: 1m, burst: 2}\n",
+                "unknown field `burst`",
+            ),
+        ] {
+            let err = Config::from_yaml_str(&format!("{base}{extra}")).expect_err(extra);
+            assert!(err.to_string().contains(expect), "{extra}: {err}");
+        }
+    }
+
+    #[test]
+    fn typo_in_a_route_match_is_rejected() {
+        let yaml = "providers:\n  webhook:\n    url: https://example.test\nroutes:\n  - match:\n      enviroment: prod\n    providers: [webhook]\n";
+        let err = Config::from_yaml_str(yaml).expect_err("typo");
+        assert!(
+            err.to_string().contains("unknown field `enviroment`"),
+            "{err}"
+        );
     }
 
     #[test]
