@@ -39,6 +39,12 @@ jobs:
         run: python scripts/set_version.py "$GITHUB_REF_NAME"
       - name: Check package versions (and the tag, on a release)
         run: python scripts/check_versions.py ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      # The release body comes from CHANGELOG.md; stop before building
+      # anything if the tag has no changelog section.
+      - name: Check the changelog has this release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python scripts/release_notes.py "$GITHUB_REF_NAME"
 
   # The wheels are abi3 (pyo3 abi3-py39), so one wheel per platform covers
   # every CPython from 3.9 up.
@@ -265,10 +271,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # every tag, to find the previous release
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      # The body is this version's CHANGELOG.md section plus install
+      # commands and a compare link to the previous tag.
+      - name: Write the release notes
+        run: |
+          previous=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname \
+            | grep -A1 -Fx "$GITHUB_REF_NAME" | sed -n 2p)
+          python3 scripts/release_notes.py "$GITHUB_REF_NAME" $previous > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
       # A -alpha.N, -beta.N or -rc.N tag is marked as a pre-release.
       - name: Create the release with every wheel and sdist attached
         env:
@@ -276,4 +293,5 @@ jobs:
           PRERELEASE: ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
         run: >
           gh release create "$GITHUB_REF_NAME" dist/*
-          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag $PRERELEASE
+          --repo "$GITHUB_REPOSITORY" --title "OpsSignal $GITHUB_REF_NAME"
+          --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRERELEASE
