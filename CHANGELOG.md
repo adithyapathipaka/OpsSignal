@@ -24,10 +24,12 @@ the next tag.
   load time; a template that fails at send time falls back to the built-in
   format, so the alert still goes out. Configs without templates send
   exactly what they did before. Python and the C library get this from the
-  config, with no API change.
+  config, with no API change
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
 - `opssignal preview` prints what each provider would be sent for a signal,
   without sending or recording it, and `opssignal notify`/`preview` take
-  `--metadata` as a JSON object.
+  `--metadata` as a JSON object
+  ([#32](https://github.com/adithyapathipaka/OpsSignal/pull/32)).
 
 ### Changed
 
