@@ -562,7 +562,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#100-beta2-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.0.0-beta.2 - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.0.0-beta.2 - 2026-10-21">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -739,7 +750,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#100-beta2-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.0.0-beta.2 - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.0.0-beta.2 - 2026-10-21">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -847,11 +869,22 @@ follow <a href="https://semver.org/">Semantic Versioning</a>. Pre-releases (<cod
 may still change config keys, the Python API and the SQLite schema.</p>
 <p>The Python packages use PEP 440 spelling for the same version, so
 <code>1.0.0-beta.1</code> is <code>1.0.0b1</code> on PyPI.</p>
-<h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <p>Changes merged to <code>main</code> that are not in a release yet. They will ship in
 the next tag.</p>
+<h2 id="100-beta2-2026-10-21"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2">1.0.0-beta.2</a> - 2026-10-21<a class="headerlink" href="#100-beta2-2026-10-21" title="Permanent link">&para;</a></h2>
+<p>Second beta: send one signal to several places at once, shape each
+provider's message, and keep noisy routes quiet. Configs written for
+<code>1.0.0-beta.1</code> keep working unchanged, except that a misspelled key inside
+a route's <code>match</code> is now reported instead of silently matching everything.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Fan-out delivery:</strong> a route can set <code>mode: fanout</code> to deliver to every
+  provider it lists at once, each retried on its own, so a provider that
+  already got the signal is never sent it again because another failed.
+  <code>failover</code> stays the default. A fan-out that reaches only some providers
+  is reported as partial, with each provider's result, and the CLI exits 1
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/26">#26</a>).</li>
 <li><strong>Message templates per provider:</strong> an optional <code>template</code> block under any
   provider replaces parts of its message with Jinja text, such as Slack's
   <code>text</code>, PagerDuty's <code>summary</code>, Teams' <code>title</code>/<code>text</code>, Opsgenie's
@@ -879,8 +912,11 @@ the next tag.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Rust API: <code>ConsoleProvider</code> is now a struct built with
-  <code>ConsoleProvider::new()</code>, and the <code>Provider</code> trait has a <code>preview</code> method
-  with a default, so existing implementations still compile.</li>
+  <code>ConsoleProvider::new()</code>, the <code>Provider</code> trait has a <code>preview</code> method
+  with a default, so existing implementations still compile, and
+  <code>DeliveryResult</code> gains a <code>Partial</code> status with per-provider results.</li>
+<li>The SQLite sink keeps one <code>deliveries</code> row per signal and provider, so a
+  signal's history shows which providers already have it.</li>
 <li>PyPI pages for <code>opssignal</code>, <code>opssignal-aws</code>, <code>opssignal-gcp</code> and
   <code>opssignal-azure</code> get a project description, links, keywords and
   classifiers (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/25">#25</a>).

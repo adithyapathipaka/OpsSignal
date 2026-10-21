@@ -1604,6 +1604,10 @@ time instead of silently dropping a provider.</p>
 </tbody>
 </table>
 <h3 id="delivery-modes">Delivery modes<a class="headerlink" href="#delivery-modes" title="Permanent link">&para;</a></h3>
+<div class="admonition info">
+<p class="admonition-title">Added in v1.0.0-beta.2</p>
+<p><code>mode: fanout</code>. Before it, every route behaved as <code>failover</code>.</p>
+</div>
 <p><strong><code>failover</code></strong> (the default): the providers are tried in order and delivery
 <strong>stops at the first one that succeeds</strong>. Each provider gets up to 3 attempts
 with exponential backoff before the next one is tried. Later providers are
