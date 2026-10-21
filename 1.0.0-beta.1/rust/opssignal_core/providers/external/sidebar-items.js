@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cloud_supported","register_cloud_sender","send_blocking"],"trait":["ExternalSender"]};
