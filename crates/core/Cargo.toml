@@ -29,6 +29,8 @@ thiserror = "1"
 sha2 = "0.10"
 tracing = "0.1"
 async-trait = "0.1"
+# join_all for fan-out delivery; already in the tree through reqwest.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # SMTP for the email provider, on the same rustls + ring stack as reqwest.
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1-rustls-tls"] }
 # Cloud config sources. object_store's own `aws`/`gcp` features pull in

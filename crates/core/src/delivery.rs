@@ -6,6 +6,8 @@ pub enum DeliveryStatus {
     /// means the process exited before delivery completed.
     Pending,
     Delivered,
+    /// A fan-out reached some of its targets but not all of them.
+    Partial,
     Failed,
     Skipped,
 }
@@ -15,18 +17,30 @@ impl std::fmt::Display for DeliveryStatus {
         f.write_str(match self {
             DeliveryStatus::Pending => "pending",
             DeliveryStatus::Delivered => "delivered",
+            DeliveryStatus::Partial => "partial",
             DeliveryStatus::Failed => "failed",
             DeliveryStatus::Skipped => "skipped",
         })
     }
 }
 
+/// The overall outcome of delivering one signal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryResult {
     pub status: DeliveryStatus,
+    /// The providers that delivered, comma separated in plan order
+    /// (`slack,pagerduty`), or `None` if none did.
     pub provider: Option<String>,
+    /// Why delivery failed. With more than one target, each failed
+    /// target's last error, prefixed with its provider.
     pub error: Option<String>,
+    /// Attempts made on the provider that decided the outcome; the most
+    /// any target needed when there are several. `deliveries` has the
+    /// count for every provider.
     pub attempts: u32,
+    /// One entry per provider tried, in plan order.
+    #[serde(default)]
+    pub deliveries: Vec<ProviderOutcome>,
 }
 
 impl DeliveryResult {
@@ -37,8 +51,19 @@ impl DeliveryResult {
             provider: None,
             error: None,
             attempts: 0,
+            deliveries: Vec::new(),
         }
     }
+}
+
+/// How delivery to one provider went: `pending` while it runs, then
+/// `delivered` or `failed`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderOutcome {
+    pub provider: String,
+    pub status: DeliveryStatus,
+    pub error: Option<String>,
+    pub attempts: u32,
 }
 
 /// Every provider (Slack, Webhook, Console, ...) implements this. Adding

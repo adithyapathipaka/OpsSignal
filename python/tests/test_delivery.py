@@ -8,6 +8,7 @@ import sys
 import textwrap
 import threading
 import time
+import typing
 from pathlib import Path
 
 import pytest
@@ -194,3 +195,69 @@ def test_signals_in_flight_at_exit_are_delivered(tmp_path):
         str(db),
     )
     assert rows.stdout.strip() == "[('delivered', 'webhook')]", rows.stderr
+
+
+class _RecordingHook(http.server.BaseHTTPRequestHandler):
+    paths: typing.ClassVar[list] = []
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        _RecordingHook.paths.append(self.path)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_fanout_route_delivers_to_every_provider(tmp_path):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _RecordingHook)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    db = tmp_path / "signals.db"
+    config = tmp_path / "signal.yaml"
+    config.write_text(
+        textwrap.dedent(
+            f"""\
+            providers:
+              slack:
+                webhook_url: "{base}/slack"
+              webhook:
+                url: "{base}/hook"
+            routes:
+              - match: {{}}
+                providers: [slack, webhook]
+                mode: fanout
+            storage:
+              path: "{db}"
+            """
+        )
+    )
+    try:
+        result = _run_isolated(
+            """
+            from opssignal import flush, notify
+            notify(source="pytest", event_type="check", title="fanout")
+            assert flush(10.0)
+            """,
+            {"SIGNAL_CONFIG": str(config)},
+        )
+    finally:
+        server.shutdown()
+    assert result.returncode == 0, result.stderr
+    assert sorted(_RecordingHook.paths) == ["/hook", "/slack"]
+    rows = _run_isolated(
+        """
+        import sqlite3, sys
+        conn = sqlite3.connect(sys.argv[1])
+        print(conn.execute("SELECT delivery_status, provider FROM signals").fetchall())
+        print(conn.execute(
+            "SELECT provider, status FROM deliveries ORDER BY provider").fetchall())
+        """,
+        {},
+        str(db),
+    )
+    assert rows.stdout.splitlines() == [
+        "[('delivered', 'slack,webhook')]",
+        "[('slack', 'delivered'), ('webhook', 'delivered')]",
+    ], rows.stderr

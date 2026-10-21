@@ -1,5 +1,5 @@
 //! Runs the built `opssignal` binary and checks its exit codes:
-//! 0 delivered, 1 delivery failed, 2 bad input or config.
+//! 0 delivered, 1 delivery failed or partial, 2 bad input or config.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -137,6 +137,29 @@ fn failed_delivery_exits_one() {
 
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("signal not delivered"));
+}
+
+#[test]
+fn partly_delivered_fanout_exits_one_and_lists_each_provider() {
+    let dir = TempDir::new();
+    let config = dir.config(&format!(
+        "providers:\n  webhook:\n    url: \"http://127.0.0.1:{}/hook\"\nroutes:\n  - match: {{}}\n    providers: [console, webhook]\n    mode: fanout\n",
+        closed_port()
+    ));
+    let out = run(
+        &notify_args(config.to_str().expect("utf-8 path"), &[]),
+        &dir,
+    );
+
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("signal only partly delivered: webhook: "),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("  console: delivered"), "stderr: {stderr}");
+    assert!(stderr.contains("  webhook: failed"), "stderr: {stderr}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("[signal:ci]"));
 }
 
 #[test]

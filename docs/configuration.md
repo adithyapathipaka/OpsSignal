@@ -239,9 +239,11 @@ than once, such as a default that every team extends, is loaded once.
 | `routes` | Added together. A later file's routes go first, so the more specific file is matched first and its providers are tried first, while the inherited routes still catch everything else. |
 | `storage` | Taken from the last file that sets it. |
 
-Because delivery stops at the first provider that succeeds (see
-[`routes`](#routes)), a team route that matches a signal effectively decides
-where it goes, and the inherited providers become its fallbacks. Routes are
+Because a `failover` route stops at the first provider that succeeds (see
+[delivery modes](#delivery-modes)), a team route that matches a signal
+effectively decides where it goes, and the inherited failover providers become
+its fallbacks. An inherited `fanout` route still delivers to all of its
+providers. Routes are
 checked after merging, so a team file can route to a provider that only its
 parent configures. A route naming an unknown provider is reported with the
 file it is in, such as `teams/payments.yaml: routes[0] references provider
@@ -319,17 +321,61 @@ Each route has a `match` block and a list of `providers`. Every condition in
 | `environment` | string | the signal's `environment` equals it |
 | `source` | string | the signal's `source` equals it |
 
-The matching routes' providers form an ordered list (in file order, with
-consecutive duplicates removed). Delivery tries them in that order and
-**stops at the first one that succeeds**. Each provider gets up to 3
-attempts with exponential backoff before the next one is tried. Later
-providers are therefore fallbacks, not extra copies.
+A route can also set `mode`, which decides what its list of providers means:
+
+| Field | Values | Default |
+|---|---|---|
+| `mode` | `failover`, `fanout` | `failover` |
+
+### Delivery modes
+
+**`failover`** (the default): the providers are tried in order and delivery
+**stops at the first one that succeeds**. Each provider gets up to 3 attempts
+with exponential backoff before the next one is tried. Later providers are
+fallbacks, not extra copies.
+
+**`fanout`**: the signal goes to **every** provider in the list at the same
+time. Each provider is retried on its own (up to 3 attempts), so a failing
+PagerDuty never causes a second Slack message, and a slow provider never
+holds up the others.
+
+```yaml
+routes:
+  # Page on-call and tell the channel, every time.
+  - match:
+      severity: [critical]
+      environment: prod
+    providers: [pagerduty, slack]
+    mode: fanout
+  # Everything else: Teams, or email if Teams is down.
+  - match: {}
+    providers: [teams, email]
+```
+
+When several routes match one signal:
+
+- each provider of a matching `fanout` route is delivered to on its own;
+- the providers of all matching `failover` routes form one ordered list (in
+  file order), which is delivered to alongside the fan-out providers and stops
+  at its first success, exactly as before `fanout` existed;
+- a provider named by more than one matching route is used once, at its
+  first position, so it never receives the same signal twice.
+
+In the example above, a critical prod signal goes to PagerDuty, Slack, and
+Teams (falling back to email); any other signal goes to Teams, falling back to
+email.
+
+The outcome is `delivered` when every fan-out provider and the failover list
+succeeded, `failed` when none did, and `partial` when some did. The sink keeps
+each provider's result too; see [`storage`](#storage).
 
 If no route matches, the list is just `console`. That fallback is built into
 the routing engine and cannot be configured away.
 
 A route that names a provider not configured under `providers` is a load-time
-error, as is a route with an empty `providers` list.
+error, as is a route with an empty `providers` list, an unknown `mode`, or an
+unknown key (so a typo such as `mod: fanout` fails at load time instead of
+leaving the route on failover).
 
 ## `storage`
 
@@ -337,6 +383,16 @@ error, as is a route with an empty `providers` list.
 |---|---|---|
 | `sink` | `sqlite` | Only `sqlite` exists today. Postgres is on the roadmap. |
 | `path` | `./signals.db` | Created if missing. |
+
+The SQLite file has two tables. `signals` holds one row per signal, with its
+overall `delivery_status` (`pending`, then `delivered`, `partial` or `failed`)
+and `provider`, the comma-separated providers that delivered it.
+`deliveries` holds one row per signal and provider, keyed by `signal_id` and
+`provider`: `pending` before the provider's first attempt, then `delivered` or
+`failed`, with its `error` and `attempts`. A process that exits in the middle
+of a fan-out therefore still shows which providers already have the signal.
+Databases created by earlier versions get the `deliveries` table the next time
+they are opened.
 
 Every signal is written to the sink with its delivery status (`delivered` or
 `failed`), the provider that delivered it, and any error.

@@ -64,17 +64,30 @@ sequenceDiagram
     Client->>Client: validate, assign id + timestamp + dedup key
     Client->>Sink: record(signal), status pending
     Client-->>App: returns
-    Client->>Router: resolve(signal)
-    Router-->>Client: provider names (never empty, console fallback)
-    loop each provider until one succeeds
-        Client->>Provider: send(signal), up to 3 attempts with backoff
-        Provider-->>Client: Ok / Err
+    Client->>Router: plan(signal)
+    Router-->>Client: delivery targets (never empty, console fallback)
+    par each target, concurrently
+        loop each provider of the target until one succeeds
+            Client->>Sink: provider_outcome(pending)
+            Client->>Provider: send(signal), up to 3 attempts with backoff
+            Provider-->>Client: Ok / Err
+            Client->>Sink: provider_outcome(delivered / failed)
+        end
     end
     Client->>Sink: complete(signal, delivery result)
 ```
 
 `notify_sync` runs the same steps but blocks the caller until the result is
 known or the timeout expires.
+
+A delivery plan is a list of targets, each an ordered list of providers. A
+`failover` route's providers join the one shared failover target; each
+provider of a `fanout` route is a target of its own. Targets run concurrently
+and never share retries, so a provider that delivered is never sent the
+signal again because another provider failed. The overall status is
+`delivered` (every target succeeded), `partial` (some did) or `failed`. A
+config without `fanout` has a single target and behaves exactly as it did
+before delivery modes existed.
 
 `notify_async` callers wait only for the local sink write, never for a
 provider. Its deliveries run on the client's runtime, so a process that exits
@@ -140,6 +153,9 @@ pub trait SignalSink: Send + Sync {
     fn record(&self, signal: &Signal) -> Result<(), SignalError>;
     /// After delivery: store the outcome (an upsert; must work without `record`).
     fn complete(&self, signal: &Signal, result: &DeliveryResult) -> Result<(), SignalError>;
+    /// During delivery: one provider's outcome, pending then delivered/failed.
+    /// Optional; defaults to doing nothing.
+    fn provider_outcome(&self, signal: &Signal, outcome: &ProviderOutcome) -> Result<(), SignalError>;
 }
 ```
 

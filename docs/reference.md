@@ -13,7 +13,8 @@ The parts most callers need:
 | `SignalClient::from_config(&Config)` | Build a client from a config you loaded yourself. |
 | `SignalClient::notify_async(SignalInput)` | Fire-and-forget delivery. The signal is saved as `pending` before this returns. |
 | `SignalClient::flush(Duration)` | Wait for fire-and-forget deliveries to finish. Dropping the client does this for up to 5 seconds. |
-| `SignalClient::notify_sync(SignalInput, Duration)` | Blocking delivery with a timeout. Returns a `DeliveryResult`. |
+| `SignalClient::notify_sync(SignalInput, Duration)` | Blocking delivery with a timeout. Returns a `DeliveryResult`, whose `deliveries` lists each provider's outcome. |
+| `routing::DeliveryMode` | A route's `mode`: `Failover` (default) or `Fanout`. |
 | `config::Config::{discover, from_file, from_yaml_str}` | Load `signal.yaml`. |
 | `delivery::Provider` | Trait to implement for a new provider. |
 | `sink::SignalSink` | Trait to implement for a new sink. |
