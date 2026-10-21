@@ -442,6 +442,70 @@ How they behave:
 A signal no route matches still goes to `console`; that fallback is never
 suppressed.
 
+### Grouping and digests
+
+!!! info "Added in v1.0.0-beta.3"
+    Routes can set `group_by` and `group_wait`.
+
+A dbt run that fails 40 tests, or a bad deploy that breaks every DAG at once,
+is one incident. A grouped route holds matching signals for a while and sends
+one digest per group instead of one message per signal:
+
+| Field | Value | Effect |
+|---|---|---|
+| `group_by` | a list of fields: `source`, `service`, `component`, `event_type`, `severity`, `title`, `environment`, `team`, `run_id`, `correlation_id`, `dedup_key`, or `metadata.<key>` (dots go deeper, as in `metadata.dag.id`) | Signals with the same values for these fields share a group. Leave it out (with `group_wait` set) to put every matching signal in one group. |
+| `group_wait` | a window, as for `dedup` (default `30s`) | How long a group stays open after its first signal. When it runs out, the digest is sent. |
+
+```yaml
+routes:
+  # One Slack message per dbt run, however many tests fail.
+  - match: {source: dbt}
+    providers: [slack]
+    group_by: [run_id]
+    group_wait: 2m
+  # Pages still go out one by one, at once.
+  - match: {severity: [critical]}
+    providers: [pagerduty]
+```
+
+The digest is a signal like any other, built from its members:
+
+- `title` is the first member's title and how many more there are:
+  `dbt test failed: not_null_orders_id (+39 more)`.
+- `message` lists the members, one `- [severity] title` line each, up to 20,
+  then `...and N more`.
+- `severity` is the highest among the members. `source`, `environment`,
+  `run_id` and the other fields keep a value every member shares and are
+  left out otherwise (`source` becomes `opssignal`, `event_type` `digest`).
+- `metadata.digest` has `count`, the `group` values, `first_at`, `last_at`
+  and `signals` (the id, title, severity, source, event type and time of the
+  first 100 members), for [templates](templates.md#digests).
+
+A group of one is sent as that signal, unchanged.
+
+How grouping behaves:
+
+- **Per route.** A grouped route sends only digests; other matching routes
+  still send each signal at once, so a page can go out immediately while the
+  channel gets the digest. A digest goes to the grouped route's own providers
+  in its own `mode`.
+- **Sent on exit too.** `flush()` in Python (run by `atexit`), `signal_flush`
+  in C, dropping a Rust `SignalClient`, and every CLI command send open groups
+  before they wait for deliveries, so a process that ends before `group_wait`
+  runs out still delivers its digest, just sooner.
+- **With dedup and rate limits.** A grouped route's `dedup` drops repeats
+  before they join a group. Its `rate_limit` counts digests, not signals, so
+  `rate_limit: {max: 5, per: 1h}` means at most five digests an hour.
+- **In the sink**, each member is stored with status `grouped` until its
+  digest goes out, then takes the digest's outcome. The digest is stored as a
+  signal of its own, with the member ids in `metadata.digest.signals`. A
+  member also sent at once on another route keeps that route's outcome.
+- **One process.** Groups are kept in the client's memory, so they collect
+  the signals one process sends: a dbt run, a long-running service, or a
+  [CLI batch](cli.md#opssignal-notify-batch). Separate processes (each Airflow task, each
+  `opssignal notify`) do not share groups. A group holds at most 500 signals;
+  the next one opens a new group.
+
 #### Dedup keys
 
 Each signal's dedup key is the one the caller passed (`dedup_key=` in Python,
@@ -452,7 +516,8 @@ own key, such as the DAG and task id, when the title changes between retries.
 
 A route that names a provider not configured under `providers` is a load-time
 error, as is a route with an empty `providers` list, an unknown `mode`, a
-`dedup` or `rate_limit` of zero, or an unknown key (so a typo such as
+`dedup`, `rate_limit` or `group_wait` of zero, a `group_by` field that isn't
+one of the fields above, or an unknown key (so a typo such as
 `mod: fanout` fails at load time instead of leaving the route on failover).
 Unknown keys inside `match` are rejected too, so a typo such as
 `enviroment: prod` fails at load time instead of matching every signal.

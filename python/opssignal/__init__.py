@@ -6,7 +6,8 @@ Public API surface for v0.1:
 
 notify() returns before delivery finishes. Signals still in flight when
 the interpreter exits are flushed by an atexit hook (up to 5 seconds);
-call flush() yourself to wait at a point of your choosing.
+call flush() yourself to wait at a point of your choosing. flush() also
+sends the digest of any group a grouped route is still holding.
 
 The Airflow adapter is the flagship integration for v0.1 — see
 opssignal.integrations.airflow.

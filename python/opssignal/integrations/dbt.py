@@ -26,7 +26,18 @@ Two ways to hook dbt up, depending on how it runs:
    the rest of the run is still going.
 
 Both emit one signal per failed node (`error`) or warned test
-(`warning`). Skipped nodes are not reported: they are skipped because an
+(`warning`). To get one message per run instead, group the route by run
+(the invocation id is the signal's `run_id`):
+
+    routes:
+      - match: {source: dbt}
+        providers: [slack]
+        group_by: [run_id]
+        group_wait: 2m
+
+and pass `--max-signals 0` (or `max_signals=0`), since the digest already
+keeps a large run to one message. The digest goes out when `group_wait`
+runs out or the process exits, whichever comes first. Skipped nodes are not reported: they are skipped because an
 upstream node failed, and that node already has its own signal. Like the
 Airflow adapter, nothing here ever raises into dbt or the caller's run,
 and notify() is fire-and-forget.

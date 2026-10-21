@@ -13,7 +13,7 @@
 //! Every storage error lets the signal through. Throttling exists to
 //! cut noise; it must never be the reason an alert went missing.
 
-use crate::routing::Route;
+use crate::routing::{RateLimit, Route, Window};
 use crate::signal::{Signal, SignalError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
@@ -33,6 +33,19 @@ pub(crate) struct Throttle {
 #[derive(Debug, Default)]
 pub(crate) struct Admission {
     rows: Vec<(String, String, i64)>,
+}
+
+impl Admission {
+    /// Moves out the sends recorded for `route`, so a route whose
+    /// delivery happens later (a digest) can release its own.
+    pub(crate) fn split_off(&mut self, route: &Route) -> Admission {
+        let key = route_key(route);
+        let (mine, rest) = std::mem::take(&mut self.rows)
+            .into_iter()
+            .partition(|(r, _, _)| *r == key);
+        self.rows = rest;
+        Admission { rows: mine }
+    }
 }
 
 impl Throttle {
@@ -55,7 +68,9 @@ impl Throttle {
     }
 
     /// Decides whether `route` may send `signal` at `now_ms` (Unix
-    /// milliseconds) and, if so, records the send in `admission`.
+    /// milliseconds) and, if so, records the send in `admission`. For a
+    /// grouped route only `dedup` is checked here: its `rate_limit`
+    /// counts digests, through [`Throttle::admit_digest`].
     pub(crate) fn admit(
         &self,
         route: &Route,
@@ -63,11 +78,51 @@ impl Throttle {
         now_ms: i64,
         admission: &mut Admission,
     ) -> Result<(), String> {
+        let rate = if route.is_grouped() {
+            None
+        } else {
+            route.rate_limit
+        };
+        self.check(
+            &route_key(route),
+            signal,
+            now_ms,
+            route.dedup,
+            rate,
+            admission,
+        )
+    }
+
+    /// Decides whether a grouped `route` may send the digest `signal`
+    /// under its `rate_limit`. Digests are counted apart from the
+    /// signals they hold, so the limit caps messages, not members.
+    pub(crate) fn admit_digest(
+        &self,
+        route: &Route,
+        signal: &Signal,
+        now_ms: i64,
+        admission: &mut Admission,
+    ) -> Result<(), String> {
+        let key = format!("{}#digest", route_key(route));
+        self.check(&key, signal, now_ms, None, route.rate_limit, admission)
+    }
+
+    fn check(
+        &self,
+        route_key: &str,
+        signal: &Signal,
+        now_ms: i64,
+        dedup: Option<Window>,
+        rate: Option<RateLimit>,
+        admission: &mut Admission,
+    ) -> Result<(), String> {
+        if dedup.is_none() && rate.is_none() {
+            return Ok(());
+        }
         let key = signal.dedup_key.clone().unwrap_or_default();
-        let route_key = route_key(route);
-        match self.try_admit(route, &route_key, &key, now_ms) {
+        match self.try_admit(route_key, &key, now_ms, dedup, rate) {
             Ok(Ok(())) => {
-                admission.rows.push((route_key, key, now_ms));
+                admission.rows.push((route_key.to_string(), key, now_ms));
                 Ok(())
             }
             Ok(Err(reason)) => Err(reason),
@@ -80,17 +135,18 @@ impl Throttle {
 
     fn try_admit(
         &self,
-        route: &Route,
         route_key: &str,
         key: &str,
         now_ms: i64,
+        dedup: Option<Window>,
+        rate: Option<RateLimit>,
     ) -> rusqlite::Result<Result<(), String>> {
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         // IMMEDIATE takes the write lock up front, so two processes
         // can't both see an empty window and both send.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        if let Some(window) = route.dedup {
+        if let Some(window) = dedup {
             let last: Option<i64> = tx
                 .query_row(
                     "SELECT MAX(sent_at) FROM throttle WHERE route = ?1 AND dedup_key = ?2",
@@ -106,7 +162,7 @@ impl Throttle {
                 )));
             }
         }
-        if let Some(limit) = route.rate_limit {
+        if let Some(limit) = rate {
             let sent: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM throttle WHERE route = ?1 AND sent_at > ?2",
                 rusqlite::params![route_key, now_ms - millis(limit.per.0)],
@@ -125,7 +181,7 @@ impl Throttle {
             rusqlite::params![route_key, key, now_ms],
         )?;
         // Rows older than both windows can no longer decide anything.
-        let keep = [route.dedup.map(|w| w.0), route.rate_limit.map(|l| l.per.0)]
+        let keep = [dedup.map(|w| w.0), rate.map(|l| l.per.0)]
             .into_iter()
             .flatten()
             .max()
@@ -158,7 +214,7 @@ impl Throttle {
     }
 }
 
-fn route_key(route: &Route) -> String {
+pub(crate) fn route_key(route: &Route) -> String {
     let json = serde_json::to_string(route).unwrap_or_default();
     format!("{:x}", Sha256::digest(json.as_bytes()))
 }
@@ -202,6 +258,8 @@ mod tests {
                 max,
                 per: Window(Duration::from_secs(per)),
             }),
+            group_by: None,
+            group_wait: None,
         }
     }
 

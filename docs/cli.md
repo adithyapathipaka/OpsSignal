@@ -33,7 +33,36 @@ opssignal notify \
 | `--config` | no | | Path to a config file. Overrides `$SIGNAL_CONFIG` and `./signal.yaml`. |
 
 Unlike the Python `notify()`, the CLI waits for delivery, with a 5 second
-timeout, so a CI step can fail when an alert didn't go out.
+timeout, so a CI step can fail when an alert didn't go out. If a
+[grouped route](configuration.md#grouping-and-digests) holds the signal, the
+CLI sends it before exiting rather than waiting for `group_wait`, since no
+later run can join the group; use `notify-batch` to group several signals.
+
+## `opssignal notify-batch`
+
+!!! info "Added in v1.0.0-beta.3"
+    Sends many signals in one run, so grouped routes can send one digest.
+
+```bash
+dbt_failures_to_json | opssignal notify-batch
+opssignal notify-batch failures.ndjson
+```
+
+Reads one JSON signal per line from the file, or from stdin when the file is
+`-` or left out. Each line has the fields of the C library's JSON payload:
+`source`, `event_type`, `title` and `severity` are required, and `message`,
+`environment`, `service`, `component`, `team`, `run_id`, `correlation_id`,
+`trace_id`, `log_url`, `metadata` and `dedup_key` are optional:
+
+```json
+{"source": "dbt", "event_type": "dbt_test_failed", "severity": "error", "title": "not_null_orders_id failed", "run_id": "inv-1"}
+```
+
+Every line is checked before anything is sent, so a bad line exits `2` with
+its line number and sends nothing. The signals are then sent one after
+another, the open groups are sent, and stderr ends with a summary such as
+`sent 40 signal(s); 40 held for 1 group send(s)`. The exit code covers every
+signal and digest: `1` if any of them failed or was only partly delivered.
 
 ## `opssignal preview`
 
@@ -62,7 +91,7 @@ that isn't configured.
 
 | Code | Meaning |
 |---|---|
-| `0` | Delivered, or held back by a route's [`dedup` or `rate_limit`](configuration.md#dedup-and-rate-limits) (stderr then shows `suppressed: ...` with the reason). |
+| `0` | Delivered, or held back by a route's [`dedup` or `rate_limit`](configuration.md#dedup-and-rate-limits) (stderr then shows `suppressed: ...` with the reason). A signal held for a [digest](configuration.md#grouping-and-digests) counts by how the digest went. |
 | `1` | Delivery failed or timed out, or a [`fanout`](configuration.md#delivery-modes) route reached only some of its providers. The outcome is still recorded in the sink, and stderr lists each provider's result. |
 | `2` | Bad input (blank title, unknown severity) or a config that fails to load. |
 

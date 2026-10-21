@@ -2,7 +2,7 @@
 
 use clap::{Args, Parser, Subcommand};
 use opssignal_core::config::Config;
-use opssignal_core::delivery::DeliveryStatus;
+use opssignal_core::delivery::{DeliveryResult, DeliveryStatus};
 use opssignal_core::signal::{Severity, Signal, SignalError, SignalInput};
 use opssignal_core::source::{ConfigSource, LoadOptions};
 use opssignal_core::{Pipeline, SignalClient};
@@ -27,6 +27,15 @@ struct Cli {
 enum Commands {
     /// Send a signal from the shell, CI, or a cron job.
     Notify(SignalArgs),
+    /// Send many signals, one JSON object per line, from a file or
+    /// stdin. Routes that set group_by or group_wait send one digest
+    /// per group before the command exits.
+    NotifyBatch {
+        /// File of newline-delimited JSON signals; `-` (the default)
+        /// reads stdin.
+        #[arg(default_value = "-")]
+        file: String,
+    },
     /// Print what each provider would be sent for a signal, as JSON,
     /// without sending or recording it. For checking message templates.
     Preview {
@@ -109,38 +118,93 @@ fn main() {
             // Exit codes: 0 delivered or suppressed by a route's dedup or
             // rate_limit, 1 delivery failed or only partly delivered, 2
             // bad input or config.
-            match client.notify_sync(input, NOTIFY_TIMEOUT) {
-                Ok(result)
-                    if matches!(
-                        result.status,
-                        DeliveryStatus::Delivered | DeliveryStatus::Skipped
-                    ) =>
-                {
-                    for line in &result.suppressed {
-                        eprintln!("suppressed: {line}");
-                    }
-                }
-                Ok(result) => {
-                    let what = match result.status {
-                        DeliveryStatus::Partial => "signal only partly delivered",
-                        _ => "signal not delivered",
-                    };
-                    eprintln!(
-                        "error: {what}: {}",
-                        result.error.unwrap_or_else(|| result.status.to_string())
-                    );
-                    for outcome in &result.deliveries {
-                        eprintln!("  {}: {}", outcome.provider, outcome.status);
-                    }
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(2);
-                }
+            let result = client
+                .notify_sync(input, NOTIFY_TIMEOUT)
+                .unwrap_or_else(|e| fail(&e));
+            let mut results = vec![result];
+            // A grouped route held the signal; this process is the
+            // group's only sender, so send it now and report that.
+            results.extend(client.flush_groups(NOTIFY_TIMEOUT));
+            std::process::exit(report(&results));
+        }
+        Commands::NotifyBatch { file } => {
+            let inputs = read_batch(&file).unwrap_or_else(|e| fail(&e));
+            let client = build_client(cli.config.as_deref()).unwrap_or_else(|e| fail(&e));
+            let mut results = Vec::new();
+            for input in inputs {
+                results.push(
+                    client
+                        .notify_sync(input, NOTIFY_TIMEOUT)
+                        .unwrap_or_else(|e| fail(&e)),
+                );
             }
+            let sent = results.len();
+            let digests = client.flush_groups(NOTIFY_TIMEOUT);
+            let held = results
+                .iter()
+                .filter(|r| r.status == DeliveryStatus::Grouped)
+                .count();
+            eprintln!(
+                "sent {sent} signal(s); {held} held for {} group send(s)",
+                digests.len()
+            );
+            results.extend(digests);
+            std::process::exit(report(&results));
         }
     }
+}
+
+/// Prints what went wrong in `results` and returns the exit code: 1 if
+/// any delivery failed or was partial, else 0. A signal held for a
+/// digest counts by the digest's outcome, which is among `results`.
+fn report(results: &[DeliveryResult]) -> i32 {
+    let mut code = 0;
+    for result in results {
+        for line in &result.suppressed {
+            eprintln!("suppressed: {line}");
+        }
+        let what = match result.status {
+            DeliveryStatus::Delivered | DeliveryStatus::Skipped | DeliveryStatus::Grouped => {
+                continue
+            }
+            DeliveryStatus::Partial => "signal only partly delivered",
+            _ => "signal not delivered",
+        };
+        eprintln!(
+            "error: {what}: {}",
+            result
+                .error
+                .clone()
+                .unwrap_or_else(|| result.status.to_string())
+        );
+        for outcome in &result.deliveries {
+            eprintln!("  {}: {}", outcome.provider, outcome.status);
+        }
+        code = 1;
+    }
+    // A group still sending when the wait ran out has no result here.
+    code
+}
+
+/// Parses every line before anything is sent, so a typo on line 30
+/// doesn't leave a batch half sent.
+fn read_batch(file: &str) -> Result<Vec<SignalInput>, String> {
+    let text = if file == "-" {
+        std::io::read_to_string(std::io::stdin()).map_err(|e| format!("cannot read stdin: {e}"))?
+    } else {
+        std::fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"))?
+    };
+    let mut inputs = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let input: SignalInput = serde_json::from_str(line)
+            .map_err(|e| format!("{file}:{}: not a valid signal: {e}", i + 1))?;
+        opssignal_core::signal::validate(&input).map_err(|e| format!("{file}:{}: {e}", i + 1))?;
+        inputs.push(input);
+    }
+    Ok(inputs)
 }
 
 /// Prints `error` and exits 2, for bad input or config.

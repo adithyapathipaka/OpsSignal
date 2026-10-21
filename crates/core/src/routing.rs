@@ -45,12 +45,80 @@ pub struct Route {
     /// Caps how many signals this route sends, whatever their key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<RateLimit>,
+    /// Holds matching signals and sends one digest for each distinct
+    /// combination of these fields: signal fields such as `source` or
+    /// `run_id`, or `metadata.<key>`. See [`GROUP_FIELDS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<Vec<String>>,
+    /// How long a group stays open after its first signal before the
+    /// digest is sent. Defaults to [`DEFAULT_GROUP_WAIT`] when only
+    /// `group_by` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_wait: Option<Window>,
 }
+
+/// How long a group waits when a route sets `group_by` but no
+/// `group_wait`.
+pub const DEFAULT_GROUP_WAIT: Duration = Duration::from_secs(30);
+
+/// The signal fields a route can `group_by`, besides `metadata.<key>`.
+pub const GROUP_FIELDS: &[&str] = &[
+    "source",
+    "service",
+    "component",
+    "event_type",
+    "severity",
+    "title",
+    "environment",
+    "team",
+    "run_id",
+    "correlation_id",
+    "dedup_key",
+];
 
 impl Route {
     /// Whether the route keeps any dedup or rate-limit state.
     pub fn is_throttled(&self) -> bool {
         self.dedup.is_some() || self.rate_limit.is_some()
+    }
+
+    /// Whether the route sends digests instead of single signals.
+    pub fn is_grouped(&self) -> bool {
+        self.group_by.is_some() || self.group_wait.is_some()
+    }
+
+    /// How long this route's groups stay open, if it groups.
+    pub fn group_window(&self) -> Option<Duration> {
+        self.is_grouped()
+            .then(|| self.group_wait.map_or(DEFAULT_GROUP_WAIT, |w| w.0))
+    }
+
+    /// Whether a signal must be checked against the route's history
+    /// while the plan is built. A grouped route checks only `dedup`
+    /// there; its `rate_limit` counts digests, so it is checked when
+    /// one is sent.
+    fn gates_signals(&self) -> bool {
+        if self.is_grouped() {
+            self.dedup.is_some()
+        } else {
+            self.is_throttled()
+        }
+    }
+
+    /// This route's providers as delivery targets, on their own: one
+    /// ordered chain for `failover`, one target per provider for
+    /// `fanout`. Used to send a digest.
+    pub fn targets(&self) -> Vec<Vec<String>> {
+        let mut names: Vec<String> = Vec::new();
+        for name in &self.providers {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        match self.mode {
+            DeliveryMode::Failover => vec![names],
+            DeliveryMode::Fanout => names.into_iter().map(|n| vec![n]).collect(),
+        }
     }
 
     /// The route's providers, as `[slack, pagerduty]`, for messages.
@@ -145,6 +213,10 @@ pub struct DeliveryPlan {
     /// `rate_limit`, one line per route. Only [`RoutingConfig::plan_with`]
     /// fills it.
     pub suppressed: Vec<String>,
+    /// Matching routes that hold the signal for a digest instead of
+    /// sending it now: the route's index in [`RoutingConfig::routes`]
+    /// and a line saying so. Their providers are not in `targets`.
+    pub grouped: Vec<(usize, String)>,
 }
 
 impl DeliveryPlan {
@@ -200,7 +272,9 @@ impl RoutingConfig {
 
     /// [`RoutingConfig::plan`] that first asks `admit` about each
     /// matching route that sets `dedup` or `rate_limit`. A route it
-    /// turns down (with the reason) adds no providers.
+    /// turns down (with the reason) adds no providers. A route that
+    /// sets `group_by` or `group_wait` adds no providers either: it is
+    /// listed in `grouped`, and only its `dedup` is asked about.
     ///
     /// Unlike `plan`, this can return no targets: when routes matched
     /// and every one of them was suppressed. That is a decision the
@@ -218,12 +292,27 @@ impl RoutingConfig {
         let mut targets: Vec<Vec<String>> = Vec::new();
         let mut failover: Option<usize> = None;
         let mut suppressed = Vec::new();
-        for route in self.routes.iter().filter(|r| r.match_rule.matches(signal)) {
-            if route.is_throttled() {
+        let mut grouped = Vec::new();
+        for (i, route) in self.routes.iter().enumerate() {
+            if !route.match_rule.matches(signal) {
+                continue;
+            }
+            if route.gates_signals() {
                 if let Err(reason) = admit(route) {
                     suppressed.push(format!("route {}: {reason}", route.describe()));
                     continue;
                 }
+            }
+            if let Some(wait) = route.group_window() {
+                grouped.push((
+                    i,
+                    format!(
+                        "route {}: held for a digest (group_wait {})",
+                        route.describe(),
+                        Window(wait)
+                    ),
+                ));
+                continue;
             }
             for name in &route.providers {
                 if seen.contains(&name) {
@@ -241,12 +330,13 @@ impl RoutingConfig {
             }
         }
 
-        if targets.is_empty() && suppressed.is_empty() {
+        if targets.is_empty() && suppressed.is_empty() && grouped.is_empty() {
             targets.push(vec!["console".to_string()]);
         }
         DeliveryPlan {
             targets,
             suppressed,
+            grouped,
         }
     }
 }
@@ -280,6 +370,8 @@ mod tests {
                 mode: DeliveryMode::Failover,
                 dedup: None,
                 rate_limit: None,
+                group_by: None,
+                group_wait: None,
             }],
         };
         let signal = sample_signal(Severity::Info, "dev");
@@ -299,6 +391,8 @@ mod tests {
                 mode: DeliveryMode::Failover,
                 dedup: None,
                 rate_limit: None,
+                group_by: None,
+                group_wait: None,
             }],
         };
         let signal = sample_signal(Severity::Error, "prod");
@@ -321,6 +415,8 @@ mod tests {
             mode: DeliveryMode::Failover,
             dedup: None,
             rate_limit: None,
+            group_by: None,
+            group_wait: None,
         }
     }
 
@@ -566,6 +662,64 @@ mod tests {
         });
         assert_eq!(unmatched.targets, names(&[&["console"]]));
         assert!(unmatched.suppressed.is_empty());
+    }
+
+    #[test]
+    fn grouped_route_is_held_not_planned_and_does_not_fall_back_to_console() {
+        let mut held = route(&[], None, None, &["slack"]);
+        held.group_by = Some(vec!["run_id".into()]);
+        let config = RoutingConfig {
+            routes: vec![
+                route(&[Severity::Critical], None, None, &["pagerduty"]),
+                held,
+            ],
+        };
+        let plan = config.plan(&sample_signal(Severity::Error, "prod"));
+        assert!(plan.targets.is_empty());
+        assert_eq!(
+            plan.grouped,
+            vec![(
+                1,
+                "route [slack]: held for a digest (group_wait 30s)".to_string()
+            )]
+        );
+        let critical = config.plan(&sample_signal(Severity::Critical, "prod"));
+        assert_eq!(critical.targets, names(&[&["pagerduty"]]));
+        assert_eq!(critical.grouped.len(), 1);
+    }
+
+    #[test]
+    fn grouped_route_asks_the_gate_only_for_dedup() {
+        let mut limited = route(&[], None, None, &["slack"]);
+        limited.group_wait = Some("1m".parse().expect("window"));
+        limited.rate_limit = Some(RateLimit {
+            max: 1,
+            per: "1m".parse().expect("window"),
+        });
+        let config = RoutingConfig {
+            routes: vec![limited.clone()],
+        };
+        let plan = config.plan_with(&sample_signal(Severity::Error, "prod"), |_| {
+            Err("never asked".to_string())
+        });
+        assert_eq!(plan.grouped.len(), 1);
+
+        limited.dedup = Some("1m".parse().expect("window"));
+        let config = RoutingConfig {
+            routes: vec![limited],
+        };
+        let plan = config.plan_with(&sample_signal(Severity::Error, "prod"), |_| {
+            Err("duplicate".to_string())
+        });
+        assert!(plan.grouped.is_empty());
+        assert_eq!(plan.suppressed.len(), 1);
+    }
+
+    #[test]
+    fn route_targets_follow_its_mode() {
+        let failover = route(&[], None, None, &["teams", "slack", "teams"]);
+        assert_eq!(failover.targets(), names(&[&["teams", "slack"]]));
+        assert_eq!(fanout(failover).targets(), names(&[&["teams"], &["slack"]]));
     }
 
     #[test]

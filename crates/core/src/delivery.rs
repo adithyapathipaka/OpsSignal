@@ -12,6 +12,10 @@ pub enum DeliveryStatus {
     /// Not sent: every route it matched was held back by its `dedup` or
     /// `rate_limit`.
     Skipped,
+    /// Held for a digest by a route's `group_by` or `group_wait`, and
+    /// matched no route that sends now. The stored row moves to the
+    /// digest's outcome once the digest is sent.
+    Grouped,
 }
 
 impl std::fmt::Display for DeliveryStatus {
@@ -22,6 +26,7 @@ impl std::fmt::Display for DeliveryStatus {
             DeliveryStatus::Partial => "partial",
             DeliveryStatus::Failed => "failed",
             DeliveryStatus::Skipped => "skipped",
+            DeliveryStatus::Grouped => "grouped",
         })
     }
 }
@@ -48,6 +53,10 @@ pub struct DeliveryResult {
     /// route and suppressed on another.
     #[serde(default)]
     pub suppressed: Vec<String>,
+    /// Matching routes holding the signal for a digest, one line per
+    /// route. A signal can be sent now on one route and held on another.
+    #[serde(default)]
+    pub grouped: Vec<String>,
 }
 
 impl DeliveryResult {
@@ -60,6 +69,7 @@ impl DeliveryResult {
             attempts: 0,
             deliveries: Vec::new(),
             suppressed: Vec::new(),
+            grouped: Vec::new(),
         }
     }
 }

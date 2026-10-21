@@ -130,6 +130,28 @@ opssignal preview --config signal.yaml \
   --title "load failed" --environment prod --metadata '{"dag_id": "orders"}'
 ```
 
+## Digests
+
+!!! info "Added in v1.0.0-beta.3"
+
+A [grouped route](configuration.md#grouping-and-digests) sends a digest, which
+templates see as a signal like any other: `title` reads
+`<first title> (+N more)` and `message` lists the members. `metadata.digest`
+is set only on digests, with `count`, `group` (the `group_by` values),
+`first_at`, `last_at` and `signals` (`id`, `title`, `severity`, `source`,
+`event_type` and `timestamp` of up to 100 members):
+
+```yaml
+providers:
+  slack:
+    webhook_url: ${SLACK_WEBHOOK_URL}
+    template:
+      text: |
+        {% if metadata.digest %}{{ emoji }} {{ metadata.digest.count }} dbt failures in run {{ run_id }}
+        {% for s in metadata.digest.signals %}• {{ s.title }}
+        {% endfor %}{% else %}{{ emoji }} {{ title }}{% endif %}
+```
+
 ## Python and C
 
 Templates live in the config, so the Python package and the C library use them

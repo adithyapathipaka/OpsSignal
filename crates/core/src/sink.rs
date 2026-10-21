@@ -217,6 +217,7 @@ mod tests {
             attempts: 3,
             deliveries: vec![],
             suppressed: vec![],
+            grouped: vec![],
         }
     }
 
@@ -285,6 +286,7 @@ mod tests {
             attempts: 1,
             deliveries: vec![],
             suppressed: vec![],
+            grouped: vec![],
         };
         sink.complete(&signal, &delivered).expect("complete");
 
@@ -391,6 +393,7 @@ mod tests {
                     outcome("pagerduty", DeliveryStatus::Failed, 3),
                 ],
                 suppressed: vec![],
+                grouped: vec![],
             },
         )
         .expect("complete");
