@@ -13,6 +13,14 @@ The Python packages use PEP 440 spelling for the same version, so
 Changes merged to `main` that are not in a release yet. They will ship in
 the next tag.
 
+## [1.0.0-beta.3] - 2026-11-02
+
+Third beta: close the loop on an alert, batch noisy runs into one message,
+and find out whether a signal was delivered. Configs written for
+`1.0.0-beta.2` keep working unchanged. The SQLite file gains an `alerts`
+table, created on first use, and Rust code that matches on
+`DeliveryStatus` strings should expect lowercase values.
+
 ### Added
 
 - **Grouping and digests:** a route can set `group_by` (signal fields or
@@ -25,7 +33,8 @@ the next tag.
   digests. Members are stored as `grouped` and take the digest's outcome.
   Flushing (Python `atexit`, C `signal_flush`, Rust drop) sends open groups,
   and the new `opssignal notify-batch` sends newline-delimited JSON signals
-  and their digests in one run. Groups are per process.
+  and their digests in one run. Groups are per process
+  ([#36](https://github.com/adithyapathipaka/OpsSignal/pull/36)).
 - **Acknowledge and resolve:** a signal's new `action` (`trigger` by default,
   `acknowledge`, `resolve`) acts on the alert its dedup key names. PagerDuty
   acknowledges or resolves the incident, Opsgenie acknowledges or closes the
@@ -39,7 +48,8 @@ the next tag.
   `opssignal acknowledge` and `opssignal resolve`, C takes `"action"` in the
   JSON, and the Airflow adapter gets `success_callback`, which resolves the
   task's failure alert. Signal JSON input may now leave out any field;
-  validation reports the ones a signal needs.
+  validation reports the ones a signal needs
+  ([#35](https://github.com/adithyapathipaka/OpsSignal/pull/35)).
 - **Delivery results in Python and C:** `opssignal.send()` takes the same
   arguments as `notify()` plus `timeout`, waits for delivery and returns a
   `DeliveryResult` with the overall status (`delivered`, `partial`, `failed`,
@@ -48,12 +58,14 @@ the next tag.
   returns the same result as JSON. `notify()` and `signal_notify_async` are
   unchanged and stay fire-and-forget. `send()` takes `action` too, so an
   acknowledge or resolve can wait for its result. In Rust,
-  `SignalClient::send` returns the same `SendReport`.
+  `SignalClient::send` returns the same `SendReport`
+  ([#34](https://github.com/adithyapathipaka/OpsSignal/pull/34)).
 
 ### Changed
 
 - Rust API: `DeliveryStatus` now serializes in lowercase (`"delivered"`),
-  matching the SQLite history and the CLI.
+  matching the SQLite history and the CLI
+  ([#34](https://github.com/adithyapathipaka/OpsSignal/pull/34)).
 
 ## [1.0.0-beta.2] - 2026-10-21
 
@@ -158,6 +170,7 @@ crates.io (`opssignal-core`, `opssignal-cli`).
 - SQLite is the only sink; a team config file can add routes but not
   remove inherited ones.
 
-[Unreleased]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.3...HEAD
+[1.0.0-beta.3]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/adithyapathipaka/OpsSignal/releases/tag/v1.0.0-beta.1

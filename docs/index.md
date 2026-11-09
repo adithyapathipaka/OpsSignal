@@ -59,6 +59,7 @@ notifications.
 |---|---|
 | v1.0.0-beta.1 (released) | Rust core, Console/Webhook/Slack/PagerDuty/Teams/Opsgenie/Email providers, SQLite sink, Python bindings, Airflow and dbt adapters, CLI, C ABI |
 | v1.0.0-beta.2 (released) | Fan-out delivery mode, message templates and `opssignal preview`, per-route dedup and rate limits |
+| v1.0.0-beta.3 | Acknowledge and resolve alerts, per-route grouping and digests, `send()` with delivery results in Python and C |
 | Later | Retry/backoff tuning, Alertmanager provider; Postgres sink; Dagster + Prefect adapters |
 | Only on demand | Java/Go bindings, only if real external demand appears |
 
