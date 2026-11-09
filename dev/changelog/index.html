@@ -589,7 +589,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#100-beta3-2026-11-02" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.0.0-beta.3 - 2026-11-02
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.0.0-beta.3 - 2026-11-02">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -805,7 +816,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#100-beta3-2026-11-02" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.0.0-beta.3 - 2026-11-02
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.0.0-beta.3 - 2026-11-02">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -952,9 +974,15 @@ follow <a href="https://semver.org/">Semantic Versioning</a>. Pre-releases (<cod
 may still change config keys, the Python API and the SQLite schema.</p>
 <p>The Python packages use PEP 440 spelling for the same version, so
 <code>1.0.0-beta.1</code> is <code>1.0.0b1</code> on PyPI.</p>
-<h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="unreleased"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.3...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <p>Changes merged to <code>main</code> that are not in a release yet. They will ship in
 the next tag.</p>
+<h2 id="100-beta3-2026-11-02"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.2...v1.0.0-beta.3">1.0.0-beta.3</a> - 2026-11-02<a class="headerlink" href="#100-beta3-2026-11-02" title="Permanent link">&para;</a></h2>
+<p>Third beta: close the loop on an alert, batch noisy runs into one message,
+and find out whether a signal was delivered. Configs written for
+<code>1.0.0-beta.2</code> keep working unchanged. The SQLite file gains an <code>alerts</code>
+table, created on first use, and Rust code that matches on
+<code>DeliveryStatus</code> strings should expect lowercase values.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Grouping and digests:</strong> a route can set <code>group_by</code> (signal fields or
@@ -967,7 +995,8 @@ the next tag.</p>
   digests. Members are stored as <code>grouped</code> and take the digest's outcome.
   Flushing (Python <code>atexit</code>, C <code>signal_flush</code>, Rust drop) sends open groups,
   and the new <code>opssignal notify-batch</code> sends newline-delimited JSON signals
-  and their digests in one run. Groups are per process.</li>
+  and their digests in one run. Groups are per process
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/36">#36</a>).</li>
 <li><strong>Acknowledge and resolve:</strong> a signal's new <code>action</code> (<code>trigger</code> by default,
   <code>acknowledge</code>, <code>resolve</code>) acts on the alert its dedup key names. PagerDuty
   acknowledges or resolves the incident, Opsgenie acknowledges or closes the
@@ -981,7 +1010,8 @@ the next tag.</p>
   <code>opssignal acknowledge</code> and <code>opssignal resolve</code>, C takes <code>"action"</code> in the
   JSON, and the Airflow adapter gets <code>success_callback</code>, which resolves the
   task's failure alert. Signal JSON input may now leave out any field;
-  validation reports the ones a signal needs.</li>
+  validation reports the ones a signal needs
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/35">#35</a>).</li>
 <li><strong>Delivery results in Python and C:</strong> <code>opssignal.send()</code> takes the same
   arguments as <code>notify()</code> plus <code>timeout</code>, waits for delivery and returns a
   <code>DeliveryResult</code> with the overall status (<code>delivered</code>, <code>partial</code>, <code>failed</code>,
@@ -990,12 +1020,14 @@ the next tag.</p>
   returns the same result as JSON. <code>notify()</code> and <code>signal_notify_async</code> are
   unchanged and stay fire-and-forget. <code>send()</code> takes <code>action</code> too, so an
   acknowledge or resolve can wait for its result. In Rust,
-  <code>SignalClient::send</code> returns the same <code>SendReport</code>.</li>
+  <code>SignalClient::send</code> returns the same <code>SendReport</code>
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/34">#34</a>).</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Rust API: <code>DeliveryStatus</code> now serializes in lowercase (<code>"delivered"</code>),
-  matching the SQLite history and the CLI.</li>
+  matching the SQLite history and the CLI
+  (<a href="https://github.com/adithyapathipaka/OpsSignal/pull/34">#34</a>).</li>
 </ul>
 <h2 id="100-beta2-2026-10-21"><a href="https://github.com/adithyapathipaka/OpsSignal/compare/v1.0.0-beta.1...v1.0.0-beta.2">1.0.0-beta.2</a> - 2026-10-21<a class="headerlink" href="#100-beta2-2026-10-21" title="Permanent link">&para;</a></h2>
 <p>Second beta: send one signal to several places at once, shape each
